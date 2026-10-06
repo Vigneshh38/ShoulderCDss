@@ -6,6 +6,10 @@ Comprehensive Clinical Decision Support System (CDSS) for Shoulder Pathologies c
 
 ```
 .
+├── intake/           # Intake router: common fields (Set A) -> red flags -> branch questions (Set B) -> wrapper
+│   ├── demo/         # Interactive Vite demo harness
+│   ├── src/          # React component, Set A/B definitions, red flags, routing rules
+│   └── test/         # Routing tests (npm test)
 ├── logic_docs/       # Master system flows, field interaction matrices, and CDSS validation requirements
 ├── s01/              # Interactive React Intake Form for S01 Rotator Cuff & Biceps Tendon Pathology
 │   ├── demo/         # Interactive Vite demo harness
@@ -31,6 +35,16 @@ Comprehensive Clinical Decision Support System (CDSS) for Shoulder Pathologies c
     ├── S17/          # Pediatric & Congenital Shoulder Conditions
     └── S18/          # Miscellaneous Rare & Diagnostically Uncertain Conditions
 ```
+
+## Getting Started (Intake Router Demo)
+
+```bash
+cd intake
+npm install
+npm run dev
+```
+
+Open [http://localhost:5502](http://localhost:5502). Fill in the common fields, answer the red-flag check and the branch questions, and it shows which wrapper (S01–S18) the case belongs to. See `intake/README.md`.
 
 ## Getting Started (S01 Intake Form Demo)
 

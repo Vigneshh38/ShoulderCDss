@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "s01"],
       "port": 5501
+    },
+    {
+      "name": "intake-router",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "intake"],
+      "port": 5502
     }
   ]
 }
