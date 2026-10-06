@@ -1,0 +1,25 @@
+// Row S01-C-000004 from the Golden Dataset. Its stored 'Affected Side Is Dominant' = Yes is wrong
+// (Right side, Left dominant); the form re-derives it as No.
+export const SAMPLE_CASE = {
+      'Case ID': 'S01-C-000004', 'Age': 37, 'Gender': 'Male', 'BMI': 27.8, 'Co-morbidities': 'None', 'Medication History': 'None',
+      'Occupation': 'Teacher', 'Activity Level': 'Light', 'Laterality': 'Right', 'Pain_Location': 'Anterior', 'Pain_Nature': 'Mixed',
+      'Pain_Intensity': 4, 'Onset': 'Insidious', 'Dominant Arm (Right/Left/Ambidextrous)': 'Left', 'Affected Side Is Dominant (Y/N)': 'Yes',
+      'Previous Shoulder Surgery - Any (Y/N, procedure/date if known)': 'No', 'Previous Episode(s) of Same Complaint (Y/N)': 'No',
+      'Previous Treatment Received (physiotherapy/injection/surgery/none)': 'None', 'Aggravating Factors': 'Lifting', 'Easing Factors': 'Heat',
+      'Night Pain (Y/N)': 'Yes', 'Sleep Disturbance Due to Pain (Y/N)': 'No', 'Smoking Status': 'Never',
+      'Cervical Spine Screen (Clear/Not Clear - referred-pain differential)': 'Clear',
+      'Mechanism/Onset (acute traumatic fall on outstretched arm / repetitive-overhead insidious)': 'Repetitive-overhead insidious',
+      'Time Since Onset': '45.8 weeks', 'Shoulder Flexion ROM (active/passive)': 158, 'Shoulder Abduction ROM (active/passive)': 144,
+      'Painful Arc (60-120 deg)': 'Present 60-120 deg', 'Empty Can (Jobe) Test': 'Negative', 'Full Can Test': 'Negative',
+      'External Rotation Lag Sign': 'Negative', 'Drop Arm Test': 'Negative', 'Lift-Off Test (subscapularis)': 'Negative', 'Belly Press Test': 'Negative',
+      "Speed's Test (biceps)": 'Negative', "Yergason's Test (biceps)": 'Negative', 'Hawkins-Kennedy Impingement Test': 'Positive',
+      'Neer Impingement Test': 'Positive', 'Muscle Strength (MMT) - ER/IR/Abduction': 'ER:4/IR:4/Abd:4',
+      'MRI_Rotator Cuff Tear Grade (partial/full-thickness) / Goutallier Fatty Infiltration Grade': 'Tear: None; Goutallier: Grade 0',
+      'Ultrasound_Tendon Tear Size': 'Not applicable (no structural tear on imaging)', 'Previous Corticosteroid Injection (Y/N, date)': 'No',
+      'Acromiohumeral Distance (Ultrasound/X-Ray, mm)': 13.7, 'Diagnosis': 'Long head of biceps tendinopathy', 'Red Flags / Precautions': 'None identified',
+      'Visual Analog Scale (VAS)': 5, 'ASES Score': 61, 'Constant-Murley Score': 64, 'SPADI': 32, 'DASH Score': 34, 'Functional Test': 'Pass',
+      'Rehabilitation Phase': 'Phase 4', 'Treatment Plan Mapping (Protocol ID)': 'S01-P-195',
+      'Progress / Follow-up Tracking': 'Visit at approx. week 46 post-onset: pain 5/10, pass on functional testing, continuing Phase 4 protocol (Protocol ID S01-P-195).',
+      'Follow_Up_Shoulder Abduction ROM': 161, 'Follow_Up_Empty Can/Full Can Strength': 5, 'Follow_Up_ASES': 75, 'Follow_Up_Painful Arc': 'Absent',
+      'Follow_Up_Balance and Stability': 'Normal', 'Return to Activities': 'Full return', 'Patient Goals / Expectations': 'Carry shopping/lift grandchildren without pain',
+    };
