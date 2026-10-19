@@ -1,13 +1,14 @@
 // Cell check: does the app write every cell exactly as the Golden Datasets do?
 //
 //   python scripts/build_routing_data.py --test-out routing_test.json --test-rows 400
-//   node scripts/check_cells.mjs routing_test.json
+//   node scripts/check_cells.mjs routing_test.json        (or every row: --test-out routing_all.jsonl --test-rows 0)
 //
 // Each row is loaded the way "Try a Golden Dataset case" loads it, then written back with rowFor (the row the app
 // writes for that workbook), and every cell is compared with the original Excel cell. Two passes:
 //   1. typed:  what the app writes when a clinician enters the same answers (no original cell to fall back on)
 //   2. loaded: what the app writes for a loaded case (untouched cells come back from the original text)
 import fs from 'node:fs';
+import readline from 'node:readline';
 import { fromDatasetRow, rowFor } from '../src/ShoulderRouter/engine.js';
 import { QUESTIONS, CORE_FIELDS, HISTORY_FIELDS } from '../src/ShoulderRouter/routingSpec.js';
 
@@ -18,8 +19,12 @@ for (const q of Object.values(QUESTIONS)) for (const [w, col] of q.cols || []) (
 const notAsked = {};
 
 const file = process.argv[2];
-if (!file) { console.error('usage: node scripts/check_cells.mjs <test.json>'); process.exit(2); }
-const rows = JSON.parse(fs.readFileSync(file, 'utf8'));
+if (!file) { console.error('usage: node scripts/check_cells.mjs <test.json | test.jsonl>'); process.exit(2); }
+// A .jsonl file is read line by line: every row at once is too large for one string.
+const rows = [];
+if (file.endsWith('.jsonl')) {
+  for await (const line of readline.createInterface({ input: fs.createReadStream(file, 'utf8'), crlfDelay: Infinity })) if (line.trim()) rows.push(JSON.parse(line));
+} else rows.push(...JSON.parse(fs.readFileSync(file, 'utf8')));
 const META = new Set(['wrapper', 'Case ID', 'Diagnosis', 'Rehabilitation Phase']);
 // Columns the app decides rather than copies: the dominant side is derived (S01 rule document) and the red-flag
 // text comes from the red-flag screen.

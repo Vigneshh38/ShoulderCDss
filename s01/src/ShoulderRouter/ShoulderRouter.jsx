@@ -1,10 +1,11 @@
-// Shoulder CDSS branch routing: everything asked before a wrapper is opened, drawn as a metro line.
+// Shoulder CDSS routing: everything asked before a wrapper is opened, drawn as a metro line. Red flags and the branch
+// walk pick a branch; the node walk then walks that branch, one question at a time, down to one wrapper.
 //
 //   <ShoulderRouter
 //     ref={routerRef}                  // optional: getRecord(), getAnswers(), evaluate(), reset(), loadSample(i)
 //     caseId="S05-C-000123"            // system/clinic-assigned; shown read-only, never typed in
 //     onChange={(answers, ev) => {}}   // every edit
-//     onRouted={record => {}}          // when the clinician confirms the branch
+//     onRouted={record => {}}          // when the clinician confirms the wrapper
 //     theme="light"                    // optional; otherwise the OS setting, with a toggle in the header
 //     persist                          // keep progress in this browser (localStorage); default true
 //     applyThemeTo="document"          // optional: put the theme on <html> instead of the component root
@@ -13,12 +14,13 @@
 //   />
 //
 // The confirmed record keys every answer by its exact Medical Record Library column: `core` holds the 23 shared
-// columns plus Red Flags / Precautions, `wrapperFields` holds each wrapper's own columns, `routing` holds the trace.
+// columns plus Red Flags / Precautions, `wrapperFields` holds each wrapper's own columns, `rows` holds the one wrapper's
+// row, `routing` holds the trace (red flags, branch walk, node walk).
 import { createContext, forwardRef, useCallback, useContext, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BUILT, WRAPPERS, SHARED_FIELDS, ROUTING_FIELDS, RED_FLAGS_DOC, RED_FLAG_FIELD_NOTES, WORKFLOW, SAMPLES } from './routingData.generated.js';
-import { STOPS, LINES, CORE_FIELDS, HISTORY_FIELDS, PROCEDURES, WHEN_HINT, COL, QUESTIONS, KEYS, FLAGS, SCREENS, SCREEN, FLAG_BRANCH, FULL_ROM, derivedDominant, surgeryOf } from './routingSpec.js';
-import { evaluate, buildRecord, fromDatasetRow, fillNormal, sharedCell } from './engine.js';
-import { NA, has, num, capsularPattern, ROM_NORM, REFLEX, girthDiff, formatFever } from './values.js';
+import { STOPS, LINES, CORE_FIELDS, HISTORY_FIELDS, PROCEDURES, WHEN_HINT, COL, QUESTIONS, KEYS, FLAGS, SCREENS, SCREEN, FLAG_BRANCH, FULL_ROM, NODES, NODE, NODE_START, EXIT, answerNode, mriCell, derivedDominant, surgeryOf } from './routingSpec.js';
+import { evaluate, routeOf, buildRecord, fromDatasetRow, fillNormal, sharedCell, nodeKey, nodeReasonKey } from './engine.js';
+import { NA, has, num, capsularPattern, ROM_NORM, REFLEX, girthDiff, formatFever, parseMmt3, formatMmt3, parseMri, parseUsSize } from './values.js';
 import './ShoulderRouter.css';
 
 // ---------- small helpers ----------
@@ -44,8 +46,11 @@ const READERS = {};
 const addReader = (k, id) => { const r = (READERS[k] ||= []); if (!r.includes(id)) r.push(id); };
 for (const f of FLAGS) { f.questions.forEach(k => addReader(k, f.id)); (f.reads || []).forEach(k => addReader(k, f.id)); }
 for (const s of SCREENS) s.questions.forEach(k => addReader(k, s.id));
+for (const n of NODES) n.questions.forEach(k => addReader(k, n.id));
 for (const f of ALL_SHARED) (f.reads || []).forEach(id => addReader(f.key, id));
-const ruleName = id => (SCREEN[id] ? `B${SCREEN[id].n} ${SCREEN[id].name}` : `${id} ${RED_FLAGS_DOC[id]?.desc || ''}`);
+const ruleName = id => (SCREEN[id] ? `B${SCREEN[id].n} ${SCREEN[id].name}` : NODE[id] ? `Node ${id} ${NODE[id].name}` : `${id} ${RED_FLAGS_DOC[id]?.desc || ''}`);
+// The branch a decision point or node belongs to (for its colour).
+const branchOfRule = id => (SCREEN[id] ? id : NODE[id] ? NODE[id].branch : null);
 const labelOf = k => QUESTIONS[k]?.label || ALL_SHARED.find(f => f.key === k.split('::')[0])?.label || k.split('::')[0];
 
 function numError(def, v) {
@@ -168,7 +173,7 @@ function Bars({ rows, total }) {
 const ReaderChips = ({ k }) => {
   const r = READERS[k] || [];
   return r.length
-    ? <div className="sr-chips">{r.map(id => <span key={id} className="sr-chip">{SCREEN[id] && <span className="sw" style={{ background: bc(id) }} />}{ruleName(id)}</span>)}</div>
+    ? <div className="sr-chips">{r.map(id => <span key={id} className="sr-chip">{branchOfRule(id) && <span className="sw" style={{ background: bc(branchOfRule(id)) }} />}{ruleName(id)}</span>)}</div>
     : <div className="small muted">Recorded for the wrapper record. No routing rule reads it.</div>;
 };
 
@@ -498,6 +503,82 @@ function WeekIn({ q }) {
   );
 }
 
+// S01 "ER:4/IR:4/Abd:4": three MRC grades, written once all three are given.
+function Mmt3In({ q }) {
+  const { a, set } = useR();
+  const v = a[q.key];
+  const empty = { er: '', ir: '', abd: '' };
+  const [s, setS] = useState(() => parseMmt3(v) || empty);
+  useEffect(() => { const p = parseMmt3(v); if (p) setS(p); else if (v === NA) setS(empty); }, [v]); // eslint-disable-line react-hooks/exhaustive-deps
+  const put = (d, g) => {
+    const n = { ...s, [d]: g };
+    setS(n);
+    if (['er', 'ir', 'abd'].every(x => n[x] !== '')) set(q.key, formatMmt3(n));
+    else if (has(a, q.key)) set(q.key, '');
+  };
+  return (
+    <>
+      <div className="sr-inrow">
+        {[['er', 'ER'], ['ir', 'IR'], ['abd', 'Abd']].map(([d, l]) => (
+          <label key={d}>{l}
+            <select className="sr-in" style={{ width: 'auto' }} value={String(s[d])} onChange={e => put(d, e.target.value === '' ? '' : Number(e.target.value))}>
+              <option value="">–</option>
+              {[5, 4, 3, 2, 1, 0].map(g => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </label>
+        ))}
+      </div>
+      <Seg options={[]} value={v === NA ? NA : null} na naLabel="Not tested" label={q.label} onChange={x => { setS(empty); set(q.key, x); }} />
+      {parseMmt3(v) && <div className="sr-colname">Excel cell: <b>{v}</b></div>}
+    </>
+  );
+}
+
+// S01 "Tear: Partial-thickness; Goutallier: Grade 1": the tear and the Goutallier grade, written once both are given.
+function MriIn({ q }) {
+  const { a, set } = useR();
+  const v = a[q.key];
+  const [s, setS] = useState(() => parseMri(v) || { tear: '', grade: '' });
+  useEffect(() => { const p = parseMri(v); if (p) setS(p); else if (v === NA) setS({ tear: '', grade: '' }); }, [v]);
+  const put = n => {
+    setS(n);
+    if (n.tear && n.grade) set(q.key, mriCell(n.tear, n.grade));
+    else if (has(a, q.key) && v !== NA) set(q.key, '');
+  };
+  return (
+    <>
+      <div className="sr-sub"><div className="q">Rotator cuff tear</div><Seg options={q.tears} value={s.tear} label="MRI tear" onChange={t => put({ ...s, tear: t })} /></div>
+      <div className="sr-sub"><div className="q">Goutallier fatty infiltration</div><Seg options={q.grades} value={s.grade} label="Goutallier grade" onChange={g => put({ ...s, grade: g })} /></div>
+      <Seg options={[]} value={v === NA ? NA : null} na naLabel={q.naLabel} label={q.label} onChange={x => { setS({ tear: '', grade: '' }); set(q.key, x); }} />
+      {parseMri(v) && <div className="sr-colname">Excel cell: <b>{v}</b></div>}
+    </>
+  );
+}
+
+// S01 "12 mm", or the "not applicable" text when ultrasound shows no structural tear.
+function UsIn({ q }) {
+  const { a, set } = useR();
+  const v = a[q.key];
+  const [t, setT] = useState(() => (parseUsSize(v) != null ? String(parseUsSize(v)) : ''));
+  useEffect(() => { const x = parseUsSize(v); if (x != null) setT(String(x)); else if (v === NA || v === q.noTear) setT(''); }, [v, q.noTear]);
+  const err = t !== '' ? numError(q, t) : null;
+  const put = x => {
+    setT(x);
+    if (x !== '' && !numError(q, x)) set(q.key, `${Number(x)} mm`);
+    else if (parseUsSize(v) != null) set(q.key, '');
+  };
+  return (
+    <>
+      <div className="sr-inrow">
+        <input className={cls('sr-in num', err && 'err')} inputMode="decimal" aria-label={`${q.label}, mm`} aria-invalid={!!err} placeholder={`${q.min}–${q.max}`} value={t} onChange={e => put(e.target.value.trim())} />
+        <span className="sr-unit">mm</span>
+      </div>
+      <Seg options={[{ v: q.noTear, l: 'No tear on ultrasound' }]} value={v === q.noTear || v === NA ? v : null} na naLabel={q.naLabel} label={q.label} onChange={x => { setT(''); set(q.key, x); }} />
+      {err && <div className="sr-err">{err}</div>}
+    </>
+  );
+}
+
 function DerivedFrom() {
   const { a, go } = useR();
   const s = surgeryOf(a);
@@ -531,6 +612,9 @@ function QControl({ q }) {
     case 'girth': return <GirthIn k={q.key} />;
     case 'reflex': return <ReflexIn k={q.key} />;
     case 'rom3': return <Rom3In k={q.key} />;
+    case 'mmt3': return <Mmt3In q={q} />;
+    case 'mri': return <MriIn q={q} />;
+    case 'usSize': return <UsIn q={q} />;
     case 'derivedFrom': return <DerivedFrom />;
     default: return null;
   }
@@ -652,7 +736,7 @@ const Legend = () => (
   </div>
 );
 
-function Strip({ cur, seen, onGo, ev }) {
+function Strip({ cur, seen, onGo, ev, route }) {
   const pathRef = useRef(null), trainRef = useRef(null), lens = useRef([]), last = useRef(cur);
   const gap = 112, pad = 40, W = pad * 2 + (STOPS.length - 1) * gap, H = 66;
   const lineIdx = [...new Set(STOPS.map(s => s.line))];
@@ -683,7 +767,10 @@ function Strip({ cur, seen, onGo, ev }) {
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
   }, [cur]); // eslint-disable-line react-hooks/exhaustive-deps
-  const status = id => (id === 'flags' ? (ev.halt ? 'var(--stop)' : ev.openFlags.length ? null : 'var(--ok)') : id === 'result' && ev.branch ? bc(ev.branch) : null);
+  const status = id => (id === 'flags' ? (ev.halt ? 'var(--stop)' : ev.openFlags.length ? null : 'var(--ok)')
+    : id === 'walk' && route.branch ? bc(route.branch)
+      : id === 'nodes' && route.nodes.wrapper ? 'var(--ok)'
+        : id === 'result' && route.nodes.wrapper ? bc(route.branch) : null);
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Route map: stop ${cur + 1} of ${STOPS.length}`}>
       {segs.map((d, i) => <path key={d} d={d} fill="none" stroke={lc(STOPS[i + 1])} strokeWidth={6} strokeLinecap="round" strokeLinejoin="round" />)}
@@ -995,7 +1082,7 @@ function WalkStop() {
   );
 }
 
-// ---------- stop 5: the branch ----------
+// ---------- the branch board (stop 5) ----------
 function BranchBoard({ final, suggested }) {
   const { tip } = useR();
   const W = 860, rowH = 31, top = 18, H = top * 2 + rowH * (SCREENS.length - 1), hx = 60, hy = H / 2, x2 = 350;
@@ -1055,31 +1142,211 @@ function Candidate({ w, hints, branchId, carried }) {
   );
 }
 
-function ResultStop() {
-  const { a, ev, override, setOverride, loaded, go, record, confirm, blockers, setWalkView, assumed, allowDownload, raw } = useR();
+// The engine's answer at a node, in words.
+const engineSays = auto => (auto.option ? `${auto.option.l}${auto.signals?.length ? `: ${auto.signals.join('; ')}` : ''}` : auto.note || (auto.missing?.length ? `waiting for ${auto.missing.map(labelOf).join(', ')}` : 'no answer yet'));
+const whereTo = o => (o.exit ? 'S18' : o.to ? `${o.to} ${WRAPPERS[o.to].name}` : `node ${o.next}`);
+
+// The nodes of one branch as a line: the path taken so far is drawn in the branch colour, the node waiting for an
+// answer pulses, and nodes off the path are faded.
+function NodeLine({ branch, nw, view, onPick }) {
+  const { tip } = useR();
+  const nodes = NODES.filter(n => n.branch === branch);
+  const step = Object.fromEntries(nw.steps.map(s => [s.id, s]));
+  const gap = 58, top = 24, x = 30, W = 320, H = top * 2 + gap * nodes.length;
+  const ys = nodes.map((_, i) => top + i * gap);
+  const color = bc(branch);
+  return (
+    <div className="sr-panel sr-line">
+      <svg viewBox={`0 0 ${W} ${H}`} role="group" aria-label={`The ${nodes.length} nodes of branch ${SCREEN[branch].n}`}>
+        <path d={`M${x},${ys[0]} V${H - top}`} stroke="var(--hair)" strokeWidth={8} strokeLinecap="round" fill="none" />
+        {nodes.map((n, i) => {
+          const s = step[n.id];
+          const state = !s ? 'unreached' : s.pick ? (s.pick.to ? 'fires' : 'clear') : 'open';
+          const viewing = view === n.id;
+          const sub = s?.pick ? `${s.by === 'clinician' ? 'Clinician' : 'Engine'}: ${s.pick.l} → ${s.pick.to ? (s.pick.exit ? 'S18' : s.pick.to) : s.pick.next}` : s ? 'waiting for an answer' : n.options.filter(o => o.to).map(o => o.to).filter((w, k, arr) => arr.indexOf(w) === k).join(' · ');
+          return (
+            <g key={n.id} className={cls('sr-st', state, viewing && 'viewing')} transform={`translate(${x},${ys[i]})`} tabIndex={0} role="button" aria-pressed={viewing}
+              aria-label={`Node ${n.id}: ${n.name}, ${state}`} onClick={() => onPick(n.id)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPick(n.id); } }}>
+              <rect x={-x} y={-gap / 2} width={W} height={gap} fill={viewing ? 'var(--grid)' : 'transparent'} rx={12} />
+              {state === 'open' && <circle className="sr-ring" r={12} />}
+              <ShapeEl kind="diamond" r={8.5} fill={state === 'fires' ? color : 'var(--station)'} stroke={state === 'unreached' ? 'var(--hair)' : state === 'open' ? 'var(--ink)' : color} strokeWidth={3} strokeLinejoin="round" transform={viewing ? 'scale(1.25)' : undefined} />
+              <text className="lab" x={24} y={-1} style={state === 'fires' ? { fill: color, fontWeight: 600 } : undefined}>{n.id} · {n.name}</text>
+              <text className="sub" x={24} y={15}>{clip(sub, 44)}</text>
+            </g>
+          );
+        })}
+        {nw.wrapper && (
+          <g transform={`translate(${x},${H - top})`} {...tip.on(() => wrapperCard(nw.wrapper), { color })}>
+            <ShapeEl kind="square" r={9} fill={nw.exit ? 'var(--station)' : color} stroke={nw.exit ? 'var(--muted)' : color} strokeWidth={3} />
+            <text className="lab" x={24} y={5} style={{ fontWeight: 600 }}>{nw.wrapper} · {clip(WRAPPERS[nw.wrapper].name, 30)}</text>
+          </g>
+        )}
+      </svg>
+    </div>
+  );
+}
+
+function NodePanel({ n, s, branch }) {
+  const { a, set, setMany, fillKeys, go, setNodeView } = useR();
   const reasonId = useId();
+  const auto = s?.auto || answerNode(n, a);
+  const chosen = a[nodeKey(n.id)] || null;
+  const opts = [...n.options, EXIT];
+  const pick = s?.pick || (chosen ? opts.find(o => o.v === chosen) : auto.option) || null;
+  const visible = n.questions.filter(k => QUESTIONS[k] && (!QUESTIONS[k].when || QUESTIONS[k].when(a)));
+  const fillable = visible.filter(k => !QUESTIONS[k].ui || QUESTIONS[k].normal !== undefined);
+  // Stay on this node after answering, so a reason box that opens is in view; "Next" moves on.
+  const choose = v => { setNodeView(n.id); if (v === auto.option?.v) setMany({ [nodeKey(n.id)]: '', [nodeReasonKey(n.id)]: '' }); else set(nodeKey(n.id), v); };
+  const differs = !!chosen && (!auto.option || chosen !== auto.option.v);
+  return (
+    <div className="sr-panel sr-screen">
+      <div className="top">
+        <div style={{ minWidth: 0 }}>
+          <div className="sr-eyebrow" style={{ color: bc(branch) }}>Node {n.id} · branch {SCREEN[branch].n}, {SCREEN[branch].name}</div>
+          <h2>{n.name}</h2>
+          <p className="muted" style={{ marginTop: 6 }}>{n.ask}</p>
+        </div>
+        {!s ? <StateBadge state="unreached" /> : s.pick ? <span className="sr-stamp sm" style={{ color: bc(branch) }}>{s.pick.l}</span> : <StateBadge state="open" />}
+      </div>
+      {!s && <div className="small muted">Not on this case's path: an earlier node is still open or led elsewhere. Its questions are shown so you can see what it asks.</div>}
+      <div className={auto.option ? 'sr-good' : 'sr-note'}><span><b style={{ fontWeight: 500 }}>Engine:</b> {engineSays(auto)}</span></div>
+      {auto.assumed?.length > 0 && <div className="sr-note"><span>Answered on an assumption: {auto.assumed.join('; ')}</span></div>}
+      {visible.length > 0 && <div className="sr-qgrid">{visible.map(k => <Question key={k} k={k} />)}</div>}
+      {fillable.length > 0 && <div className="sr-row"><button type="button" className="sr-btn" onClick={() => fillKeys(fillable)}>All normal</button></div>}
+      <div className="sr-col" style={{ gap: 8 }}>
+        <h3>Answer</h3>
+        <div className="sr-seg" role="radiogroup" aria-label={`Answer at node ${n.id}`}>
+          {opts.map(o => (
+            <button key={o.v} type="button" role="radio" aria-checked={pick?.v === o.v} className={cls(pick?.v === o.v && 'on', o.exit && 'na')} onClick={() => choose(o.v)}>
+              {o.l} → {whereTo(o)}{auto.option?.v === o.v ? ' · engine' : ''}
+            </button>
+          ))}
+        </div>
+        {chosen && <div className="sr-row"><button type="button" className="sr-btn" onClick={() => setMany({ [nodeKey(n.id)]: '', [nodeReasonKey(n.id)]: '' })}>Follow the engine</button><span className="small muted">The clinician's answer is saved with the case.</span></div>}
+        {differs && (
+          <>
+            <label className="small" htmlFor={reasonId}>Why “{opts.find(o => o.v === chosen)?.l}”? {auto.option ? `The engine answered “${auto.option.l}”.` : 'The engine could not answer this node.'} Required, and saved with the case.</label>
+            <textarea id={reasonId} className="sr-in" value={a[nodeReasonKey(n.id)] || ''} placeholder="e.g. the MRI report shows a full-thickness tear that the form above does not record" onChange={e => set(nodeReasonKey(n.id), e.target.value)} />
+          </>
+        )}
+      </div>
+      {s?.pick && (
+        <div className="sr-row">
+          {s.pick.next ? <button type="button" className="sr-bigbtn" onClick={() => setNodeView(s.pick.next)}>Next: node {s.pick.next} →</button>
+            : <button type="button" className="sr-bigbtn" onClick={() => go(5)}>Ends at {s.pick.to}: see the wrapper →</button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NotYet({ i, purpose }) {
+  const { ev, go } = useR();
+  return (
+    <>
+      <StopHead i={i} purpose={purpose} />
+      <div className="sr-panel sr-col">
+        <div><span className="sr-stamp idle">Not yet</span></div>
+        <div className="sr-say">{ev.openFlags.length ? `${ev.openFlags.length} red flag${ev.openFlags.length > 1 ? 's' : ''} still to screen.` : `Decision point ${SCREEN[ev.current].n} (${SCREEN[ev.current].name}) is waiting for answers.`}</div>
+        <div><button type="button" className="sr-bigbtn" onClick={() => go(ev.openFlags.length ? 2 : 3)}>{ev.openFlags.length ? 'Screen the red flags' : 'Continue the branch walk'}</button></div>
+      </div>
+    </>
+  );
+}
+
+// ---------- stop 5: the node walk ----------
+const NODE_PURPOSE = 'Inside the branch, one question at a time, down to the one wrapper the case goes into. Each answer ends at a wrapper or leads to the next node, and every node also offers “None of these fit - clinician review”.';
+function NodesStop() {
+  const { ev, route, override, setOverride, nodeView, setNodeView, go } = useR();
+  const reasonId = useId();
+  if (!route.branch) return <NotYet i={4} purpose={NODE_PURPOSE} />;
+  const S = SCREEN[route.branch];
+  const nw = route.nodes;
+  const nodes = NODES.filter(n => n.branch === route.branch);
+  const view = nodes.some(n => n.id === nodeView) ? nodeView : nw.at || nw.steps.at(-1)?.id || NODE_START[route.branch];
+  const hd = ev.halt ? RED_FLAGS_DOC[ev.halt.id] : null;
+  const answered = nw.steps.filter(s => s.pick).length;
+  return (
+    <>
+      <StopHead i={4} purpose={NODE_PURPOSE} />
+      <Facts items={[
+        [NODES.length, `nodes, in the ${Object.keys(NODE_START).length} branches that hold more than one wrapper`],
+        [route.candidates.length, `candidate wrapper${route.candidates.length > 1 ? 's' : ''} for this case (${route.candidates.join(', ')})`],
+        [nw.single ? '–' : `${answered}`, nw.single ? 'no node walk needed' : `node${answered === 1 ? '' : 's'} answered on the path`],
+        [nw.wrapper || '…', nw.wrapper ? WRAPPERS[nw.wrapper].name : 'the wrapper, once the walk ends'],
+      ]} />
+      <div className="sr-panel sr-board"><BranchBoard final={route.branch} suggested={ev.branch} /></div>
+      <div className="sr-result">
+        <div className="sr-col">
+          <div className="sr-panel sr-col">
+            <div className="sr-row">
+              {ev.halt && <span className="sr-stamp stop">Halt · {ev.halt.id}</span>}
+              <span className="sr-stamp" style={{ color: bc(route.branch) }}>Branch {S.n}</span>
+              <h2 style={{ flex: '1 1 200px' }}>{S.name}</h2>
+            </div>
+            <div className="sr-say" style={{ borderColor: bc(route.branch) }}>
+              {override.branch ? `The clinician chose branch ${S.n}. The engine suggested branch ${SCREEN[ev.branch].n}, ${SCREEN[ev.branch].name}.`
+                : ev.halt ? `Red flag ${ev.halt.id} (${hd.desc.toLowerCase()}) routed the case here without the branch walk. ${hd.urgency}.`
+                  : `Decision point ${S.n} was the first to match: ${(ev.walk.find(w => w.id === ev.branch)?.signals || []).join('; ')}.`}
+            </div>
+            {nw.single && (
+              <>
+                <div className="sr-good"><span>This {ev.halt && !override.branch ? 'red flag' : 'branch'} leads to one wrapper, {nw.wrapper} {WRAPPERS[nw.wrapper].name}, so there is no node walk.</span></div>
+                <div><button type="button" className="sr-bigbtn" onClick={() => go(5)}>See the wrapper →</button></div>
+              </>
+            )}
+          </div>
+          {!nw.single && (
+            <div className="sr-walk">
+              <NodeLine branch={route.branch} nw={nw} view={view} onPick={setNodeView} />
+              <NodePanel key={view} n={NODE[view]} s={nw.steps.find(x => x.id === view)} branch={route.branch} />
+            </div>
+          )}
+        </div>
+        <div className="sr-col sr-sticky">
+          <div className="sr-panel sr-col">
+            <h3>Clinician's choice of branch</h3>
+            <div className="sr-seg">
+              <button type="button" className={!override.branch ? 'on' : ''} onClick={() => setOverride({ branch: null, reason: '' })}>Follow the engine (B{SCREEN[ev.branch].n})</button>
+              {SCREENS.filter(s => s.id !== ev.branch).map(s => (
+                <button key={s.id} type="button" title={s.name} className={override.branch === s.id ? 'on' : ''} onClick={() => setOverride(o => ({ branch: s.id, reason: o.reason }))}>B{s.n}</button>
+              ))}
+            </div>
+            {override.branch && (
+              <>
+                <label className="small" htmlFor={reasonId}>Why branch {S.n}, {S.name}? Required, and saved with the case.</label>
+                <textarea id={reasonId} className="sr-in" value={override.reason} placeholder="e.g. the instability tests were pain-limited; the MRI already shows a full-thickness tear" onChange={e => setOverride(o => ({ ...o, reason: e.target.value }))} />
+                {ev.halt && <div className="sr-bad"><span>The halt stays: {ev.halt.id} still needs {hd.urgency.toLowerCase()} referral.</span></div>}
+              </>
+            )}
+          </div>
+          {!nw.single && (
+            <div className="sr-panel sr-col small">
+              <b style={{ fontWeight: 500 }}>How the nodes work</b>
+              <span>The engine reads the answers and proposes an answer at each node, the way the Knee CDSS walks its branches. A yes/no node says yes on the first sign; a node with several answers waits until all its questions are answered.</span>
+              <span>A different answer from the engine's needs a written reason. “None of these fit” ends in S18 for clinician review.</span>
+              <span>The node order and the MRC threshold are drafts for clinical sign-off.</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ---------- stop 6: the wrapper ----------
+const RESULT_PURPOSE = 'The one wrapper this case goes into, and the whole route that led there. Confirm to save the record for the wrapper form.';
+function ResultStop() {
+  const { ev, route, override, loaded, go, record, preview, confirm, blockers, setWalkView, setNodeView, allowDownload } = useR();
   const [copied, setCopied] = useState(false);
   const jsonRef = useRef(null);
-  const preview = useMemo(() => buildRecord(a, { assumed: [...assumed], raw }), [a, assumed, raw]);
-  if (!ev.branch) {
-    return (
-      <>
-        <StopHead i={4} purpose="Where the walk lands. The engine suggests a branch; the clinician can choose another with a written reason." />
-        <div className="sr-panel sr-col">
-          <div><span className="sr-stamp idle">Not yet</span></div>
-          <div className="sr-say">{ev.openFlags.length ? `${ev.openFlags.length} red flag${ev.openFlags.length > 1 ? 's' : ''} still to screen.` : `Decision point ${SCREEN[ev.current].n} (${SCREEN[ev.current].name}) is waiting for answers.`}</div>
-          <div><button type="button" className="sr-bigbtn" onClick={() => go(ev.openFlags.length ? 2 : 3)}>{ev.openFlags.length ? 'Screen the red flags' : 'Continue the walk'}</button></div>
-        </div>
-      </>
-    );
-  }
-  const final = override.branch || ev.branch;
-  const S = SCREEN[final];
-  const cands = override.branch ? S.wrappers : ev.candidates;
-  const hints = override.branch ? [] : ev.hints || [];
-  const step = ev.walk.find(w => w.id === ev.branch);
-  const docs = WORKFLOW.presenting.filter(p => p.ids.some(id => cands.includes(id)));
+  if (!route.branch) return <NotYet i={5} purpose={RESULT_PURPOSE} />;
+  const nw = route.nodes;
+  const S = SCREEN[route.branch];
+  const w = nw.wrapper;
   const hd = ev.halt ? RED_FLAGS_DOC[ev.halt.id] : null;
+  const docs = w ? WORKFLOW.presenting.filter(p => p.ids.includes(w)) : [];
   const download = DOWNLOADS ? () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(record, null, 2)], { type: 'application/json' }));
     const el = document.createElement('a');
@@ -1095,32 +1362,34 @@ function ResultStop() {
   };
   return (
     <>
-      <StopHead i={4} purpose="Where the walk lands. The engine suggests a branch; the clinician can choose another with a written reason. Inside the branch, the wrapper's own fields decide the condition." />
-      <div className="sr-panel sr-board"><BranchBoard final={final} suggested={ev.branch} /></div>
+      <StopHead i={5} purpose={RESULT_PURPOSE} />
       <div className="sr-result">
         <div className="sr-col">
           <div className="sr-panel sr-col">
             <div className="sr-row">
               {ev.halt && <span className="sr-stamp stop">Halt · {ev.halt.id}</span>}
-              <span className="sr-stamp" style={{ color: bc(final) }}>Branch {S.n}</span>
-              <h2 style={{ flex: '1 1 200px' }}>{S.name}</h2>
+              <span className="sr-stamp" style={{ color: bc(route.branch) }}>{w || 'Not yet'}</span>
+              <h2 style={{ flex: '1 1 200px' }}>{w ? WRAPPERS[w].name : `Branch ${S.n}: the node walk is not finished`}</h2>
             </div>
-            <div className="sr-say" style={{ borderColor: bc(final) }}>
-              {override.branch ? `The clinician chose branch ${S.n}. The engine suggested branch ${SCREEN[ev.branch].n}, ${SCREEN[ev.branch].name}.`
-                : ev.halt ? `Red flag ${ev.halt.id} (${hd.desc.toLowerCase()}) routed the case here without walking. ${hd.urgency}.`
-                  : `Decision point ${S.n} was the first to match: ${(step?.signals || []).join('; ')}.`}
-            </div>
-            {ev.halt && <div className="sr-bad"><span>No rehabilitation plan until the referral clears the case. Every fired flag is written into Red Flags / Precautions.</span></div>}
-            {loaded && (
-              SCREEN[final].wrappers.includes(loaded.wrapper)
-                ? <div className="sr-good"><span>This dataset case comes from {loaded.wrapper} ({loaded.diagnosis}), and branch {S.n} holds {loaded.wrapper}.</span></div>
-                : <div className="sr-bad"><span>This dataset case comes from {loaded.wrapper} ({loaded.diagnosis}), but branch {S.n} does not hold {loaded.wrapper}.</span></div>
+            {!w ? (
+              <>
+                <div className="sr-say">Node {nw.at} is waiting for an answer.</div>
+                <div><button type="button" className="sr-bigbtn" onClick={() => { setNodeView(nw.at); go(4); }}>Continue the node walk</button></div>
+              </>
+            ) : (
+              <div className="sr-say" style={{ borderColor: bc(route.branch) }}>
+                {ev.halt && !override.branch ? `Red flag ${ev.halt.id} → branch` : 'Branch'} {S.n}, {S.name}{nw.single ? '' : ` → ${nw.steps.length} node${nw.steps.length > 1 ? 's' : ''}`} → {w}.
+                {nw.exit ? ' No node answer fitted, so the case goes to S18 for clinician review.' : ''}
+              </div>
+            )}
+            {ev.halt && <div className="sr-bad"><span>No rehabilitation plan until the referral clears the case ({hd.urgency.toLowerCase()}). Every fired flag is written into Red Flags / Precautions.</span></div>}
+            {loaded && w && (
+              loaded.wrapper === w
+                ? <div className="sr-good"><span>This dataset case comes from {loaded.wrapper} ({loaded.diagnosis}), and the walk ends in {w}.</span></div>
+                : <div className="sr-bad"><span>This dataset case comes from {loaded.wrapper} ({loaded.diagnosis}), but the walk ends in {w}.</span></div>
             )}
           </div>
-          <h3>{cands.length === 1 ? 'The wrapper' : `The ${cands.length} wrappers in this branch`}</h3>
-          <div className="sr-cands">
-            {cands.map(w => <Candidate key={w} w={w} branchId={final} hints={hints.filter(h => h.w === w)} carried={Object.keys(preview.wrapperFields[w] || {}).filter(c => WRAPPERS[w].specificFields.includes(c)).length} />)}
-          </div>
+          {w && <div className="sr-cands"><Candidate w={w} branchId={route.branch} hints={(override.branch ? [] : ev.hints || []).filter(h => h.w === w)} carried={Object.keys(preview.wrapperFields[w] || {}).filter(c => WRAPPERS[w].specificFields.includes(c)).length} /></div>}
           {docs.length > 0 && (
             <div className="sr-panel sr-col small">
               <h3>What the Workflow Guide says</h3>
@@ -1128,14 +1397,14 @@ function ResultStop() {
             </div>
           )}
           <div className="sr-panel sr-col">
-            <h3>The walk</h3>
+            <h3>The branch walk</h3>
             <div className="sr-trace">
-              {ev.walk.map((w, i) => {
+              {ev.walk.map((x, i) => {
                 const s = SCREENS[i];
-                const why = w.state === 'fires' ? (w.signals || [])[0] : w.state === 'clear' ? (w.note || (w.assumed?.length ? `clear, assuming ${w.assumed[0]}` : 'clear')) : w.state === 'open' ? 'waiting for answers' : 'not reached';
+                const why = x.state === 'fires' ? (x.signals || [])[0] : x.state === 'clear' ? (x.note || (x.assumed?.length ? `clear, assuming ${x.assumed[0]}` : 'clear')) : x.state === 'open' ? 'waiting for answers' : 'not reached';
                 return (
                   <button key={s.id} type="button" onClick={() => { setWalkView(s.id); go(3, { view: s.id }); }}>
-                    <Shape kind={s.shape} size={18} stroke={w.state === 'fires' ? bc(s.id) : w.state === 'clear' ? 'var(--ok)' : 'var(--hair)'} fill={w.state === 'fires' ? bc(s.id) : 'var(--station)'} sw={2.4} />
+                    <Shape kind={s.shape} size={18} stroke={x.state === 'fires' ? bc(s.id) : x.state === 'clear' ? 'var(--ok)' : 'var(--hair)'} fill={x.state === 'fires' ? bc(s.id) : 'var(--station)'} sw={2.4} />
                     <span className="n">B{s.n}</span>
                     <span>{s.name} <span className="r">· {why}</span></span>
                   </button>
@@ -1143,31 +1412,29 @@ function ResultStop() {
               })}
             </div>
           </div>
+          {!nw.single && (
+            <div className="sr-panel sr-col">
+              <h3>The node walk</h3>
+              <div className="sr-trace">
+                {nw.steps.map(s => (
+                  <button key={s.id} type="button" onClick={() => { setNodeView(s.id); go(4); }}>
+                    <Shape kind="diamond" size={18} stroke={s.pick ? bc(route.branch) : 'var(--hair)'} fill={s.pick?.to ? bc(route.branch) : 'var(--station)'} sw={2.4} />
+                    <span className="n">{s.id}</span>
+                    <span>{s.node.name} <span className="r">· {s.pick ? `${s.pick.l} → ${s.pick.to || s.pick.next}${s.by === 'clinician' ? ' (clinician)' : ''}` : 'waiting for an answer'}</span></span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <div className="sr-col sr-sticky">
           <div className="sr-panel sr-col">
-            <h3>Clinician's choice</h3>
-            <div className="sr-seg">
-              <button type="button" className={!override.branch ? 'on' : ''} onClick={() => setOverride({ branch: null, reason: '' })}>Follow the engine (B{SCREEN[ev.branch].n})</button>
-              {SCREENS.filter(s => s.id !== ev.branch).map(s => (
-                <button key={s.id} type="button" title={s.name} className={override.branch === s.id ? 'on' : ''} onClick={() => setOverride(o => ({ branch: s.id, reason: o.reason }))}>B{s.n}</button>
-              ))}
-            </div>
-            {override.branch && (
-              <>
-                <label className="small" htmlFor={reasonId}>Why branch {S.n}, {S.name}? Required, and saved with the case.</label>
-                <textarea id={reasonId} className="sr-in" value={override.reason} placeholder="e.g. the instability tests were pain-limited; the MRI already shows a full-thickness tear" onChange={e => setOverride(o => ({ ...o, reason: e.target.value }))} />
-                {ev.halt && <div className="sr-bad"><span>The halt stays: {ev.halt.id} still needs {hd.urgency.toLowerCase()} referral.</span></div>}
-              </>
-            )}
-          </div>
-          <div className="sr-panel sr-col">
             <h3>Save the routing</h3>
             {blockers.map(b => <div key={b} className="sr-bad"><span>{b}</span></div>)}
-            <button type="button" className="sr-bigbtn" disabled={blockers.length > 0} onClick={confirm}>Confirm branch {S.n}</button>
+            <button type="button" className="sr-bigbtn" disabled={blockers.length > 0} onClick={confirm}>{w ? `Confirm ${w}` : 'Confirm'}</button>
             {record && (
               <>
-                <div className="sr-good"><span>Confirmed. The record keys every answer by its exact Excel column, ready for the wrapper form.</span></div>
+                <div className="sr-good"><span>Confirmed. The record keys every answer by its exact Excel column, ready for the {w} form.</span></div>
                 <div className="sr-row">
                   {DOWNLOADS && allowDownload && <button type="button" className="sr-btn" onClick={download}>Download JSON</button>}
                   <button type="button" className="sr-btn" onClick={copy}>{copied === 'copied' ? 'Copied' : 'Copy JSON'}</button>
@@ -1184,7 +1451,7 @@ function ResultStop() {
 }
 
 // ---------- the component ----------
-const BODIES = { patient: PatientStop, history: HistoryStop, flags: FlagsStop, walk: WalkStop, result: ResultStop };
+const BODIES = { patient: PatientStop, history: HistoryStop, flags: FlagsStop, walk: WalkStop, nodes: NodesStop, result: ResultStop };
 
 const sampleState = idx => {
   const row = SAMPLES[idx];
@@ -1210,18 +1477,21 @@ const ShoulderRouter = forwardRef(function ShoulderRouter(
   const [override, setOverrideRaw] = useState(() => saved?.override || { branch: null, reason: '' });
   const [loaded, setLoaded] = useState(() => saved?.loaded || start?.loaded || null);
   const [walkView, setWalkView] = useState(() => saved?.walkView || null);
+  const [nodeView, setNodeView] = useState(() => saved?.nodeView || null);
   const [record, setRecord] = useState(null);
   const [themeState, setThemeState] = useState(() => saved?.theme || null);
   const [resetKey, setResetKey] = useState(0);
   const rootRef = useRef(null);
   const [tipState, tip] = useTip();
   const ev = useMemo(() => evaluate(a), [a]);
+  const route = useMemo(() => routeOf(a, ev, override), [a, ev, override]);
   const assumed = useMemo(() => new Set(assumedArr), [assumedArr]);
+  const preview = useMemo(() => buildRecord(a, { override, assumed: assumedArr, raw }), [a, override, assumedArr, raw]);
   const caseIdShown = caseId || loaded?.caseId || '';
 
   useEffect(() => {
-    if (persist) writeStore(storageKey, { a, assumed: assumedArr, raw, stop, seen, override, loaded, walkView, theme: themeState });
-  }, [persist, storageKey, a, assumedArr, raw, stop, seen, override, loaded, walkView, themeState]);
+    if (persist) writeStore(storageKey, { a, assumed: assumedArr, raw, stop, seen, override, loaded, walkView, nodeView, theme: themeState });
+  }, [persist, storageKey, a, assumedArr, raw, stop, seen, override, loaded, walkView, nodeView, themeState]);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const onRoutedRef = useRef(onRouted);
@@ -1254,6 +1524,7 @@ const ShoulderRouter = forwardRef(function ShoulderRouter(
     setStop(to);
     setSeen(s => (s[STOPS[to].id] ? s : { ...s, [STOPS[to].id]: 1 }));
     if (STOPS[to].id === 'walk') setWalkView(opts.view || ev.current || ev.suggested || 'B1');
+    if (STOPS[to].id === 'nodes' && opts.node) setNodeView(opts.node);
     tip.hide();
     requestAnimationFrame(() => {
       const el = rootRef.current;
@@ -1271,10 +1542,10 @@ const ShoulderRouter = forwardRef(function ShoulderRouter(
     const s = sampleState(idx);
     if (!s) return;
     setA(s.answers); setAssumed(s.assumed); setRaw(s.raw); setLoaded(s.loaded);
-    setOverrideRaw({ branch: null, reason: '' }); setRecord(null); setWalkView(null); setResetKey(n => n + 1);
+    setOverrideRaw({ branch: null, reason: '' }); setRecord(null); setWalkView(null); setNodeView(null); setResetKey(n => n + 1);
   }, []);
   const newPatient = useCallback(() => {
-    setA({}); setAssumed([]); setRaw({}); setLoaded(null); setOverrideRaw({ branch: null, reason: '' }); setRecord(null); setWalkView(null);
+    setA({}); setAssumed([]); setRaw({}); setLoaded(null); setOverrideRaw({ branch: null, reason: '' }); setRecord(null); setWalkView(null); setNodeView(null);
     setSeen({ [STOPS[0].id]: 1 }); setResetKey(n => n + 1); setDir(-1); setMoved(true); setStop(0);
   }, []);
 
@@ -1289,6 +1560,8 @@ const ShoulderRouter = forwardRef(function ShoulderRouter(
     invalid.length > 0 && `Fix the out-of-range or non-numeric value${invalid.length > 1 ? 's' : ''}: ${invalid.join(', ')}.`,
     override.branch && override.reason.trim().length < 5 && 'Write a reason for choosing a different branch.',
     !ev.branch && 'No branch yet.',
+    route.branch && !route.nodes.wrapper && `The node walk is waiting at node ${route.nodes.at}.`,
+    ...route.nodes.steps.filter(x => x.differs && x.reason.trim().length < 5).map(x => `Write a reason for the answer at node ${x.id}: it is not the engine's.`),
   ].filter(Boolean);
   const confirm = useCallback(() => {
     const rec = buildRecord(a, { caseId: caseIdShown, override, assumed: assumedArr, raw });
@@ -1332,19 +1605,18 @@ const ShoulderRouter = forwardRef(function ShoulderRouter(
   };
   const S = STOPS[stop];
   const Body = BODIES[S.id];
-  const status = ev.halt ? `Halt · ${ev.halt.id} → branch ${SCREEN[ev.branch].n}`
-    : ev.branch ? `Branch ${SCREEN[ev.branch].n} · ${SCREEN[ev.branch].name}`
-      : ev.openFlags.length ? `${ev.openFlags.length} red flag${ev.openFlags.length > 1 ? 's' : ''} to screen`
-        : `Waiting at decision point ${SCREEN[ev.current].n}`;
-  const ctx = { a, set, setMany, fillKeys, assumed, ev, tip, go, override, setOverride, loaded, loadSample, newPatient, walkView, setWalkView, record, confirm, blockers, allowDownload, raw };
+  const nw = route.nodes;
+  const status = !route.branch ? (ev.openFlags.length ? `${ev.openFlags.length} red flag${ev.openFlags.length > 1 ? 's' : ''} to screen` : `Waiting at decision point ${SCREEN[ev.current].n}`)
+    : `${ev.halt ? `Halt · ${ev.halt.id} → ` : ''}Branch ${SCREEN[route.branch].n}${nw.wrapper ? ` → ${nw.wrapper} · ${WRAPPERS[nw.wrapper].name}` : ` · node walk at ${nw.at}`}`;
+  const ctx = { a, set, setMany, fillKeys, assumed, ev, route, preview, tip, go, override, setOverride, loaded, loadSample, newPatient, walkView, setWalkView, nodeView, setNodeView, record, confirm, blockers, allowDownload, raw };
 
   return (
     <Ctx.Provider value={ctx}>
       <div className={cls('sr', className)} data-theme={onDoc ? undefined : themeAttr} ref={rootRef}>
         <header className="sr-top">
           <div className="sr-topin">
-            <div className="sr-brand">Shoulder CDSS Metro<small>Branch routing · Case {caseIdShown || 'assigned on save'}</small></div>
-            <div className="sr-strip"><Strip cur={stop} seen={seen} onGo={go} ev={ev} /></div>
+            <div className="sr-brand">Shoulder CDSS Metro<small>Routing to a wrapper · Case {caseIdShown || 'assigned on save'}</small></div>
+            <div className="sr-strip"><Strip cur={stop} seen={seen} onGo={go} ev={ev} route={route} /></div>
             <div className="sr-clock">
               <Clock cur={stop} />
               {!theme && <button type="button" className="sr-iconbtn" aria-label="Switch light or dark" onClick={toggleTheme}>◐</button>}

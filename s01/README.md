@@ -2,7 +2,7 @@
 
 Two components for the Knee CDSS app, plus a demo host (`demo/`) with a tab for each:
 
-1. **`ShoulderRouter`**: everything asked *before* a wrapper is opened. It covers the shared intake, the red-flag screen and the branch walk, and ends at the branch.
+1. **`ShoulderRouter`**: everything asked *before* a wrapper is opened. It covers the shared intake, the red-flag screen, the branch walk and the node walk, and ends at **one wrapper**.
 2. **`S01IntakeForm`**: the full S01 Medical Record Library form.
 
 ## Run the demo
@@ -12,11 +12,11 @@ npm install
 npm run dev
 ```
 
-Then open http://localhost:5501. The demo page in `demo/` stands in for the Knee app, with one tab for the branch routing and one for the S01 form.
+Then open http://localhost:5501. The demo page in `demo/` stands in for the Knee app, with one tab for the routing and one for the S01 form.
 
-## Branch routing (`src/ShoulderRouter/`)
+## Routing (`src/ShoulderRouter/`)
 
-Five stops, drawn as a metro line in the same style as the Knee CDSS Metro page:
+Six stops, drawn as a metro line in the same style as the Knee CDSS Metro page:
 
 | Stop | What it asks |
 |---|---|
@@ -24,14 +24,35 @@ Five stops, drawn as a metro line in the same style as the Knee CDSS Metro page:
 | 2. History | The 11 shared history columns. Previous surgery is asked in parts: procedure, side, timing, and whether it is the reason for this visit |
 | 3. Red flags | SH-RF-01 to 09. A fired flag halts the case and routes it straight to that flag's wrapper |
 | 4. Branch walk | The 11 decision points in the Workflow Guide's order. The first match wins |
-| 5. Branch | The branch and its wrappers, a clinician override (reason required), and the confirmed record |
+| 5. Node walk | Inside a branch that holds more than one wrapper (B1, B7, B8, B10, and red flag SH-RF-07): one question per node until one wrapper is left. Also the clinician's choice of branch (reason required) |
+| 6. Wrapper | The one wrapper, the whole route that led there, and the confirmed record |
+
+**The map of every path** (red flags → branch walk → node walk → wrapper) is `docs/routing_map.svg` / `.png`, drawn from `routingSpec.js` by `node scripts/draw_routing_map.mjs`.
+
+### The node walk
+
+It works like the Knee CDSS node walk (`kneeCdssV2/stages/03b-node-walk.js`): each node asks one question, and each answer either ends at a wrapper or leads to the next node. A case goes into exactly one primary wrapper (Workflow Guide, section 3).
+
+- **The engine answers each node from the answers given so far.** A yes/no node says yes on the first sign. A node with several answers (B1.1, B1.2, B7.1, B7.2) waits until all its questions are answered, so a later answer cannot change it. If more than one answer fits (B1.2, B7.2), or the scapular rhythm is not assessed (B10.8), the clinician picks.
+- **The clinician can answer differently.** Their answer is saved with the case, and a written reason is required when it is not the engine's.
+- **Every node offers "None of these fit - clinician review"**, which ends in S18 (the Knee CDSS gives every node the same honest exit).
+- **18 nodes in 4 branches:**
+
+| Branch | Nodes (in order) |
+|---|---|
+| B1 Fracture / dislocation | B1.1 which bone imaging shows (S08 / S09 / S10) → not imaged: B1.2 site of the deformity → no fracture: B1.3 high-energy injury (S10) |
+| B7 AC / SC joint | B7.1 which joint is tender (S04 / S07) → both or neither: B7.2 the joint's own tests, X-ray and injection |
+| B8 Neurological | B8.1 named shoulder nerve weak (S16) → B8.2 thoracic outlet signs (S14) → B8.3 dermatomal, reflex or EMG change (S16) |
+| B10 Mechanical / arthritic / scapular | B10.1 X-ray arthritis (S06) → B10.2 inflammatory arthritis (S06) → B10.3 cuff tear on MRI/ultrasound (S01) → B10.4 lag or drop-arm sign (S01) → B10.5 joint crepitus (S06) → B10.6 snapping scapula (S10) → B10.7 scapular dyskinesis (S11) → B10.8 winging with a normal rhythm (S10) → B10.9 cuff/biceps test or weakness MRC ≤ 4 (S01) → B10.10 impingement or bursitis (S03) |
+
+The node order inside B10 (structural findings first), the MRC threshold and the pseudo-winging rule are drafts for clinical sign-off (`clinical_signoff_questions.md`, items 26–32).
 
 ```jsx
 import ShoulderRouter from './cdss/shoulder/ShoulderRouter';
 
 <ShoulderRouter
   caseId={caseIdFromBackend}        // shown read-only, never typed in
-  onRouted={record => api.saveRouting(record)}   // when the clinician confirms the branch
+  onRouted={record => api.saveRouting(record)}   // when the clinician confirms the wrapper
   onChange={(answers, ev) => {}}    // every edit; ev = evaluate(answers)
   theme="light"                     // optional; otherwise the OS setting, with a toggle in the header
   persist                           // keep progress in this browser (localStorage); default true
@@ -42,32 +63,38 @@ import ShoulderRouter from './cdss/shoulder/ShoulderRouter';
 - **The record** has three parts:
   - `core`: the 23 shared columns plus `Red Flags / Precautions`
   - `wrapperFields`: each wrapper's own columns, keyed by exact header
-  - `rows`: for each wrapper in the final branch, its Medical Record Library row written the way that workbook writes it (its own separators, "Other (specify)" style, "Not Clear" wording, red-flag phrasing, and S11's onset). `scripts/check_cells.mjs` compares these rows cell by cell with the Excel.
-  - `routing`: red-flag states, the walk trace, suggested and final branch, override and reason, and any not-assessed answers
+  - `rows`: the Medical Record Library row of the one wrapper the node walk ends in, written the way that workbook writes it (its own separators, "Other (specify)" style, "Not Clear" wording, red-flag phrasing, and S11's onset). `scripts/check_cells.mjs` compares these rows cell by cell with the Excel.
+  - `routing`: red-flag states, the branch walk trace, suggested and final branch, override and reason, `wrapper`, the `nodeWalk` trace (each node's question, answer, the engine's answer and its signals, who answered, and the reason when the clinician differed), and any not-assessed answers
 - **Three states, never two.** Blank means not asked, "Not assessed" means looked at but could not answer, and anything else is a finding. A "Not assessed" answer can let a decision point pass, but it is listed as an assumption.
 - **Try a Golden Dataset case:** loads one of 97 simulated test cases, one per condition. A row only has its own workbook's columns, so the other routing questions get their normal answer. Those are drawn dashed and left out of the saved record.
-- `evaluate`, `buildRecord` and `fromDatasetRow` (in `engine.js`) are plain JS with no React, so a server can run the same rules.
+- `evaluate`, `routeOf`, `walkNodes`, `buildRecord` and `fromDatasetRow` (in `engine.js`) are plain JS with no React, so a server can run the same rules. `evaluate(answers).wrapper` is the engine's wrapper.
 
 | File | Purpose |
 |---|---|
 | `ShoulderRouter.jsx` / `.css` | The component and its scoped styles (`.sr`, Jost font loaded in `index.html`) |
-| `routingSpec.js` | The stops, questions, 9 red flags and 11 decision points, with their rules |
-| `engine.js` | Evaluation, the output record, and loading a dataset row |
+| `routingSpec.js` | The stops, questions, 9 red flags, 11 decision points and 18 nodes, with their rules |
+| `engine.js` | Evaluation (red flags, branch walk, node walk), the output record, and loading a dataset row |
 | `values.js` | Value helpers and the composite cell formats |
 | `routingData.generated.js` | Built from the 18 Golden Datasets and the docs. **Do not edit by hand** |
 
-**Regenerate the data, then check the routing against the Golden Dataset rows:**
+**Regenerate the data, then check the routing against the Golden Dataset rows.** `--test-rows 0` writes every row (418,500, one per line, about 600 MB); `400` writes a quick sample per wrapper. The test reports, per wrapper, the branch, the node walk (for rows that reached the right branch) and the final wrapper, and fails if any Phase 1–2 row ends in a wrong wrapper:
 
 ```bash
-python scripts/build_routing_data.py --test-out routing_test.json --test-rows 400
-node scripts/test_routing.mjs routing_test.json
+python scripts/build_routing_data.py --test-out routing_all.jsonl --test-rows 0
+node --max-old-space-size=8000 scripts/test_routing.mjs routing_all.jsonl
 ```
 
-**Check that nothing deviates from the Excel files.** The first script checks every column and option against all 18 workbooks. The second loads each test row and compares every cell the app would write with the original:
+**Check that nothing deviates from the Excel files.** The first script checks every column, option and combined-cell pattern against all 18 workbooks. The second loads each test row and compares every cell the app would write with the original:
 
 ```bash
 python scripts/audit_fields.py field_audit.txt
-node scripts/check_cells.mjs routing_test.json
+node --max-old-space-size=9000 scripts/check_cells.mjs routing_all.jsonl
+```
+
+**Draw the routing map** from the spec (`docs/routing_map.svg`; render it to PNG with any SVG tool):
+
+```bash
+node scripts/draw_routing_map.mjs
 ```
 
 **Build the standalone page** (the claude.ai artifact version). It writes one self-contained HTML file: React 18.3.1 is loaded from cdnjs, and downloads are compiled out because the artifact viewer blocks them.
@@ -76,7 +103,25 @@ node scripts/check_cells.mjs routing_test.json
 node scripts/build_artifact.mjs shoulder-cdss-metro.html
 ```
 
-On 7,200 Golden Dataset rows (400 per wrapper), 92.6% land in a branch that holds their own wrapper. For first presentations (Phase 1–2, where routing happens), the figure is 97.1%. Most misses are recovering Phase 3–4 cases whose tests have already returned to normal, or rows whose own workbook records no positive finding.
+**Results on all 418,500 Golden Dataset rows (19 October 2026):**
+
+| | All rows | Phase 1–2 (first presentation) |
+|---|---|---|
+| Branch holds the row's own wrapper | 94.81% | 98.30% |
+| Node walk ends in the right wrapper (rows already in the right branch) | 99.99% (48 of 396,769 wrong) | **100%** (0 of 218,032 wrong) |
+| Final wrapper = the row's own wrapper | 94.80% | 98.30% |
+| Rows ending in a wrong wrapper | 48 | **0** |
+
+- **Every other miss goes to S18 for clinician review**, never to a wrong wrapper.
+- **The 48 wrong rows** are recovered Phase 4 S01 patients with every cuff test negative, strength 5/5 and no tear. Nothing in them tells the cuff (S01) from impingement (S03), so they end in S03.
+- **The misses are rows whose own workbook records no sign of the condition**, for example:
+  - S10 scapulothoracic bursitis with no snapping and no winging (S10 has no tenderness or bursa column);
+  - S14 "disputed" thoracic outlet syndrome, which has no objective sign by definition;
+  - S04 and S07 rows with no tenderness, negative tests and normal imaging;
+  - recovering Phase 3–4 cases (S05, S16) whose findings have already returned to normal.
+- **Every cell the app writes is identical to the Excel** in all 418,500 rows (11,576,500 cells), and the field audit finds 0 problems.
+
+Before the node walk (11 October 2026), 91.9% of all rows and 97.1% of Phase 1–2 rows reached a branch holding their wrapper. The branch walk now also reads each wrapper's own defining findings (item 32 in the sign-off list).
 
 **Still drafts, for clinical sign-off.** `Shoulder_CDSS_Wrapper_Routing_Map.xlsx` was never provided. It should hold the official branch questions and the 9 red-flag rules.
 - **From the docs:**
@@ -88,8 +133,10 @@ On 7,200 Golden Dataset rows (400 per wrapper), 92.6% land in a branch that hold
   - Every other trigger
   - The capsular-pattern thresholds
   - The nerve-weakness cut-off (MRC 3 or less)
+  - The node walk: the B10 node order, the cuff-weakness cut-off (MRC 4 or less) and the pseudo-winging rule
+  - The wrappers' own findings added to the branch walk on 19 October 2026
 
-`clinical_signoff_questions.md` lists the 25 rules a clinician must confirm. For each one it gives the app's current value, what guidelines and studies say (with links), and a suggested value.
+`clinical_signoff_questions.md` lists the 32 rules a clinician must confirm. For each one it gives the app's current value, what guidelines and studies say (with links), and a suggested value.
 
 ## S01 intake form (`src/S01IntakeForm/`)
 

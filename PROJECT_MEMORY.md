@@ -106,6 +106,12 @@ Ref methods: `validate()`, `getRecord()`, `getRaw()`, `setRecord(rec)`, `reset()
 
 Full detail is in `Grading_Staging_Scale_Reference`.
 
+**Node walk (built 2026-10-19, draft order):**
+- B1: which bone imaging shows (S08/S09/S10) → before the X-ray, the site of the deformity → no fracture after a high-energy injury: S10.
+- B7: which joint is tender (S04/S07) → both or neither: each joint's own tests, X-ray and injection.
+- B8: named shoulder nerve weak (S16) → thoracic outlet signs (S14) → dermatome / reflex / EMG (S16).
+- B10: X-ray arthritis (S06) → inflammatory (S06) → cuff tear on imaging (S01) → lag / drop arm (S01) → crepitus (S06) → snapping scapula (S10) → dyskinesis (S11) → winging with normal rhythm (S10) → cuff/biceps test or MRC ≤ 4 (S01) → impingement / bursitis (S03) → else S18.
+
 ## 5. Missing files (asked the user; not yet provided)
 
 | File | Why it matters |
@@ -132,7 +138,14 @@ A clinician then reviews and signs them off.
 - [x] **Branch routing built** (`s01/src/ShoulderRouter/`, 2026-10-10): core intake → History → red flags (SH-RF-01..09) → 11-point branch walk → branch with clinician override (reason required). Every question is a real Excel column. Data comes from `s01/scripts/build_routing_data.py` (all 18 Golden Datasets + docs). Self-test with `s01/scripts/test_routing.mjs`: 92.6% of 7,200 real rows (97.1% of Phase 1–2) land in their own wrapper's branch.
   - The 9 red flags' ID, description, urgency and wrapper were recovered from section 10 of the wrapper docs. Only SH-RF-01's trigger is documented; the other triggers are drafts for clinical sign-off.
   - User decisions: keep the documented 11 branches, use field-question red flags, allow override only with a written reason.
-- [ ] Next: open the wrapper form after the branch (start with S01, which exists), then diagnosis/leaf flow.
+- [x] **Node walk built** (2026-10-19): inside a branch with more than one wrapper (B1, B7, B8, B10, and red flag SH-RF-07), one question per node down to **one wrapper**, like the Knee CDSS stage 03b. 18 nodes (`NODES` in `routingSpec.js`), a new "Node walk" stop, the final stop is now "Wrapper", and the record's `rows` holds only that wrapper's row plus a `routing.nodeWalk` trace.
+  - The engine answers each node; the clinician can answer differently with a written reason; every node has "None of these fit - clinician review" → S18 (knee ruling 9).
+  - The branch walk now also reads each wrapper's own defining findings (B6 posterior tests and MRI; B7 joint tests, X-ray, injection; B8 cervical rib and MRI/CT compression site; B9 os acromiale at any age; B10 lag, drop arm, belly press, Yergason's, MRI/ultrasound tear, bursa, injection, inflammatory signs). 29 new questions, all real Excel columns.
+  - **Tested on all 418,500 rows** (`test_routing.mjs` on `--test-rows 0`): node walk 100% of Phase 1–2 rows that reached the right branch (0 of 218,032 wrong); final wrapper 94.80% of all rows, 98.30% of Phase 1–2 rows; 0 Phase 1–2 rows in a wrong wrapper (every other miss goes to S18 for clinician review). Before: 91.93% / 97.12% reached the right branch.
+  - Cell check 100% on all rows (11,576,500 cells), field audit 0 problems, vite build OK, checked in the browser (6 cases + a node override).
+  - Map of every path: `s01/docs/routing_map.svg` / `.png`, drawn from the spec by `scripts/draw_routing_map.mjs`.
+  - Sign-off items 26–32 added to `s01/clinical_signoff_questions.md` (B10 node order, MRC ≤ 4 cuff weakness, pseudo-winging, B1 before X-ray, B7 both/neither tender, B8 order, the new branch findings).
+- [ ] Next: open the wrapper form after the wrapper is chosen (start with S01, which exists), then the diagnosis/leaf flow inside the wrapper.
 - [ ] Fix the S01 protocol filter. It matches Diagnosis + Phase only; the PROTO rule also needs the **grading field + Age range**.
 - [ ] Fix the data issues (section 7) when the user asks.
 
@@ -178,6 +191,8 @@ A clinician then reviews and signs them off.
 **Across the docs:**
 - **No real "cleared" field for S13/S15.** A hidden "cleared" value decides the halt status, but a live form needs real fields. A clinical definition is needed (the docs name Jeeva as sign-off for S13/S15).
 - **File naming:** the docs say every dataset is named `..._Golden_Dataset_SIMULATED.xlsx`; only S15's file actually is.
+- **Rows with no sign of their own condition (routing cannot reach them; they go to S18 for clinician review), 19 Oct 2026:** 3,771 Phase 1–2 rows, mainly S10 scapulothoracic bursitis with no snapping or winging (1,572; S10 has no tenderness or bursa column), S14 "disputed" neurogenic TOS with every test negative (569), S04 (735) and S07 (672) with no tenderness, negative tests and normal imaging, S06 with KL 0–1 and no crepitus (183). Plus Phase 3–4 recovered rows (all S05 and S16 misses). 48 recovered Phase 4 S01 rows (all tests negative, 5/5, no tear) end in S03.
+- **Two malignancies in one Co-morbidities cell (S05, 3 rows):** the form has one "specify" text, so the second is kept as written (fixed in `fromDatasetRow`, 19 Oct 2026).
 - **Surgery names are spelled several ways** across the workbooks (e.g. `Rotator cuff repair` / `rotator cuff repair` / `Arthroscopic RCR`). The app copies them exactly, so it works, but the Excel should be made consistent.
 
 **Knee vs Shoulder value standardisation (checked 2026-10-19):**

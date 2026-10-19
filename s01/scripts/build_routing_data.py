@@ -9,6 +9,7 @@ Reads:
 Usage (from the s01 folder):
   python scripts/build_routing_data.py
   python scripts/build_routing_data.py --test-out ../tmp/routing_test.json --test-rows 400
+  python scripts/build_routing_data.py --test-out ../tmp/routing_all.jsonl --test-rows 0     (every row, one per line)
 
 ROUTING_FIELDS below must list every wrapper-specific column that src/ShoulderRouter/routingSpec.js asks.
 """
@@ -47,18 +48,30 @@ TREATMENT = 'Previous Treatment Received (physiotherapy/injection/surgery/none)'
 CERVICAL = 'Cervical Spine Screen (Clear/Not Clear - referred-pain differential)'
 FREE_TEXT = ['Medication History', 'Occupation', 'Aggravating Factors', 'Easing Factors']
 
-# Wrapper-specific columns asked by the red-flag screen and the branch walk (see routingSpec.js).
+# Wrapper-specific columns asked by the red-flag screen, the branch walk and the node walk (see routingSpec.js).
 ROUTING_FIELDS = {
     'S01': ['Painful Arc (60-120 deg)', 'Empty Can (Jobe) Test', 'Full Can Test', 'Lift-Off Test (subscapularis)',
-            "Speed's Test (biceps)", 'Hawkins-Kennedy Impingement Test', 'Neer Impingement Test'],
+            "Speed's Test (biceps)", 'Hawkins-Kennedy Impingement Test', 'Neer Impingement Test',
+            'External Rotation Lag Sign', 'Drop Arm Test', 'Belly Press Test', "Yergason's Test (biceps)",
+            'Muscle Strength (MMT) - ER/IR/Abduction',
+            'MRI_Rotator Cuff Tear Grade (partial/full-thickness) / Goutallier Fatty Infiltration Grade',
+            'Ultrasound_Tendon Tear Size'],
     'S02': ['Number of Prior Dislocation Episodes', 'Apprehension Test', 'Relocation Test', 'Sulcus Sign',
-            "O'Brien's Active Compression Test (SLAP)"],
-    'S03': ['Painful Arc', 'Hawkins-Kennedy Test', 'Neer Test', 'Subacromial Tenderness (Palpation)'],
-    'S04': ['AC Joint Tenderness/Step Deformity', 'Cross-Body Adduction Test'],
+            "O'Brien's Active Compression Test (SLAP)", 'Jerk Test (posterior instability)',
+            'Kim Test (posterior labral)', 'Load and Shift Test', 'Anterior/Posterior Drawer Test (GH joint)',
+            'MRI Arthrogram_Labral Tear Location/Type (Bankart / SLAP I-IV / reverse Bankart)',
+            'MRI_Hill-Sachs Lesion Present (Y/N)'],
+    'S03': ['Painful Arc', 'Hawkins-Kennedy Test', 'Neer Test', 'Subacromial Tenderness (Palpation)',
+            'Ultrasound_Subacromial Bursal Thickening/Effusion', 'Response to Diagnostic Subacromial Injection (Y/N)'],
+    'S04': ['AC Joint Tenderness/Step Deformity', 'Cross-Body Adduction Test', "O'Brien's Test (AC-specific)",
+            'AC Joint Compression Test', 'Piano Key Sign', 'X-Ray_Rockwood Classification (Type I-VI)',
+            'Response to Diagnostic AC Joint Injection (Y/N)'],
     'S05': ['Passive ROM Restriction (capsular pattern: ER > Abduction > IR)', 'End-Feel (capsular)'],
-    'S06': ['Crepitus', 'X-Ray_Kellgren-Lawrence Grade (Glenohumeral)'],
+    'S06': ['Crepitus', 'X-Ray_Kellgren-Lawrence Grade (Glenohumeral)',
+            'Symmetric Joint Involvement (inflammatory screen)',
+            'Extra-Articular Manifestations (if inflammatory - nodules/eye/skin/lung)'],
     'S07': ['Neurovascular Status (retrosternal compromise screen - critical for posterior dislocation)',
-            'SC Joint Tenderness/Swelling/Deformity'],
+            'SC Joint Tenderness/Swelling/Deformity', 'Serial Compression Test', 'X-Ray_Serendipity View Findings'],
     'S08': ['Gross Deformity', 'X-Ray_Neer Classification', 'Skin Integrity (open vs closed)',
             'Neurovascular Status (axillary nerve/axillary artery)'],
     'S09': ['Deformity/Shortening', 'X-Ray_Allman Classification', 'Skin Tenting/Open Fracture Screen'],
@@ -71,7 +84,8 @@ ROUTING_FIELDS = {
     'S13': ['Type of Arthroplasty (Anatomic/Reverse/Hemiarthroplasty)', 'Fever/Systemic Illness',
             'Wound Discharge/Erythema', 'Joint Aspirate_Appearance'],
     'S14': ['Sensory Distribution (ulnar nerve/C8-T1)', 'Roos Test (EAST)', "Adson's Test", "Wright's Test (Hyperabduction)",
-            'Costoclavicular Maneuver', 'Upper Limb Tension Test (ULTT)'],
+            'Costoclavicular Maneuver', 'Upper Limb Tension Test (ULTT)', 'MRI/CT_Brachial Plexus Compression Site',
+            'Cervical Rib Palpation', 'X-Ray_Cervical Rib Present'],
     'S15': ['Onset (acute arm swelling/discolouration - effort thrombosis - vs chronic intermittent claudication-type)',
             'Radial Pulse Comparison (bilateral)', 'Limb Colour/Temperature Asymmetry',
             'Venous Distension/Swelling (effort thrombosis screen)', 'Limb Girth Comparison (cm, bilateral)'],
@@ -81,7 +95,8 @@ ROUTING_FIELDS = {
             'Long Thoracic Nerve_Serratus Anterior Strength/Winging', 'Spinal Accessory Nerve_Trapezius Strength',
             'Sensory Mapping (dermatomal)', 'Reflexes (biceps/triceps)', 'EMG/Nerve Conduction Study_Findings',
             'MRI_Nerve Compression Site (suprascapular/spinoglenoid notch)'],
-    'S17': ['Onset (birth-related / developmental)', 'Birth History (shoulder dystocia/traction injury)'],
+    'S17': ['Onset (birth-related / developmental)', 'Birth History (shoulder dystocia/traction injury)',
+            'X-Ray_Os Acromiale Present', 'Os Acromiale Palpation'],
     'S18': ['MRI/Biopsy_Suspected Tumour Findings', 'Crepitus/Mass Palpation', 'Symptom Pattern (atypical/non-mechanical)',
             'Referred Pain Screen (cervical spine/cardiac/diaphragmatic)'],
 }
@@ -209,12 +224,12 @@ def read_dataset(w, test_rows):
             rec = {c: r[col[c]] for c in keep if c in col}
             samples[dx] = rec
             seen_dx.add(dx)
-        if test_rows:
+        if test_rows is not None:
             rows.append(r)
     test = []
-    if test_rows and rows:
-        step = max(1, len(rows) // test_rows)
-        for r in rows[::step][:test_rows]:
+    if test_rows is not None and rows:
+        step = max(1, len(rows) // test_rows) if test_rows else 1
+        for r in (rows[::step][:test_rows] if test_rows else rows):
             test.append({c: r[col[c]] for c in keep if c in col})
     specific = header[header.index('Cervical Spine Screen (Clear/Not Clear - referred-pain differential)') + 1:header.index('Diagnosis')]
     return {
@@ -270,8 +285,8 @@ def dialect(counts):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--test-out', help='also write a JSON test set of Golden Dataset rows to this path')
-    ap.add_argument('--test-rows', type=int, default=400, help='rows per wrapper in the test set')
+    ap.add_argument('--test-out', help='also write a test set of Golden Dataset rows to this path (.json, or .jsonl: one row per line)')
+    ap.add_argument('--test-rows', type=int, default=400, help='rows per wrapper in the test set; 0 = every row')
     args = ap.parse_args()
 
     l1, ddx, grading = read_library()
@@ -281,9 +296,10 @@ def main():
     wrappers, fields, samples, test = {}, {}, [], []
     dialects, comorb, comorb_in, free = {}, collections.Counter(), collections.defaultdict(set), {c: collections.Counter() for c in FREE_TEXT}
     shared_values = {c: collections.Counter() for c in ['Onset', 'Pain_Location']}
+    jsonl = open(args.test_out, 'w', encoding='utf8') if args.test_out and args.test_out.endswith('.jsonl') else None
     for w in IDS:
         print(f'reading {w} ...', flush=True)
-        d = read_dataset(w, args.test_out and args.test_rows)
+        d = read_dataset(w, args.test_rows if args.test_out else None)
         for c in shared_values:
             shared_values[c].update(d['counts'][c])
         dialects[w] = dialect(d['counts'])
@@ -318,7 +334,11 @@ def main():
         for s in d['samples']:
             samples.append({'wrapper': w, **{k: jsonable(v) for k, v in s.items()}})
         for s in d['test']:
-            test.append({'wrapper': w, **{k: jsonable(v) for k, v in s.items()}})
+            row = {'wrapper': w, **{k: jsonable(v) for k, v in s.items()}}
+            if jsonl:
+                jsonl.write(json.dumps(row, ensure_ascii=False) + '\n')
+            else:
+                test.append(row)
 
     shared = {}
     for c in SHARED:
@@ -364,7 +384,10 @@ def main():
         fh.write('\n'.join(parts))
     print(f'wrote {OUT} ({os.path.getsize(OUT) // 1024} KB): {built["rows"]} rows, {built["conditions"]} conditions, '
           f'{len(red_flags)} red flags, {len(samples)} sample cases')
-    if args.test_out:
+    if jsonl:
+        jsonl.close()
+        print(f'wrote {args.test_out} (one test row per line)')
+    elif args.test_out:
         with open(args.test_out, 'w', encoding='utf8') as fh:
             json.dump(test, fh, ensure_ascii=False)
         print(f'wrote {args.test_out} ({len(test)} test rows)')

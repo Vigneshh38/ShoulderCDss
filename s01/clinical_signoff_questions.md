@@ -1,6 +1,6 @@
-# Clinical sign-off: 25 rules to confirm
+# Clinical sign-off: 32 rules to confirm
 
-**Shoulder CDSS branch routing** (`src/ShoulderRouter/`). Prepared 11 October 2026 for clinician review.
+**Shoulder CDSS routing** (`src/ShoulderRouter/`). Prepared 11 October 2026 for clinician review; items 26–32 (the node walk) added 19 October 2026.
 
 **Read this first**
 
@@ -43,6 +43,13 @@
 | 23 | Tests per branch | See the table in item 23 | Your call |
 | 24 | "No signs" / "All normal" answers | See the table in item 24 | Your call |
 | 25 | Question wording | Plain English + exact column | Your call |
+| 26 | Node order inside B10 | Structural findings first | Your call |
+| 27 | Cuff weakness | MRC 4 or less in ER, IR or abduction = cuff | Your call |
+| 28 | Winging with a normal scapular rhythm | Bursa lifting the blade (S10) | Your call |
+| 29 | Fracture not imaged yet / no fracture | Deformity site decides; high-energy, no fracture = S10 | Your call |
+| 30 | Both AC and SC joints tender, or neither | Each joint's own tests, X-ray and injection decide | Your call |
+| 31 | Node order inside B8 | Named nerve (S16), then thoracic outlet (S14), then dermatome/reflex/EMG (S16) | Your call |
+| 32 | Each wrapper's own findings in the branch walk | Added to B6, B7, B8, B9, B10 | Your call |
 
 At the end: **5 red flags from UK guidance that are not among the docs' 9**, and a list of what I could not check.
 
@@ -405,11 +412,13 @@ At the end: **5 red flags from UK guidance that are not among the docs' 9**, and
 | B3 Other surgery | The index surgery on this shoulder, weeks 0–52 |
 | B4 Vascular | Pulse reduced or absent; colour or temperature change; venous swelling; any vascular onset answer |
 | B5 Frozen shoulder | Capsular pattern (item 10) with KL below 2 and an onset that is not sudden |
-| B6 Instability | 1 or more past dislocations; apprehension, relocation, sulcus or O'Brien positive |
-| B7 AC / SC joint | AC or SC tenderness or deformity |
-| B8 Neurological | C8–T1 sensation reduced or absent; Roos, Adson, Wright, costoclavicular or ULTT positive; dermatome sensation reduced or absent; axillary, long thoracic or spinal accessory at MRC 3 or less; suprascapular at MRC 3 or less with EMG or MRI support |
-| B9 Paediatric | Congenital onset; or under 18 with a birth-related, developmental or inflammatory onset, or a dystocia/traction birth history |
-| B10 Mechanical / arthritic / scapular | Painful arc; Empty Can, Full Can, Lift-Off or Speed's positive; Hawkins-Kennedy or Neer positive; subacromial tenderness; crepitus; KL 2 or more; dyskinesis; winging; snapping |
+| B6 Instability | 1 or more past dislocations; apprehension, relocation, sulcus, O'Brien, **Jerk, Kim, load-and-shift or drawer** positive; **a labral tear or a Hill-Sachs lesion on MRI** |
+| B7 AC / SC joint | AC or SC tenderness or deformity; **AC compression, piano key or AC O'Brien's positive; Rockwood II–VI on X-ray; relief from an AC injection; SC serial compression positive; SC displacement on the serendipity view** |
+| B8 Neurological | C8–T1 sensation reduced or absent; Roos, Adson, Wright, costoclavicular or ULTT positive; **a plexus compression site on MRI/CT; a cervical rib (felt or on X-ray)**; dermatome sensation reduced or absent; axillary, long thoracic or spinal accessory at MRC 3 or less; suprascapular at MRC 3 or less with EMG or MRI support |
+| B9 Paediatric | Congenital onset; **os acromiale (X-ray or tender), at any age**; or under 18 with a birth-related, developmental or inflammatory onset, or a dystocia/traction birth history |
+| B10 Mechanical / arthritic / scapular | Painful arc; Empty Can, Full Can, Lift-Off, Speed's, **ER lag, drop arm, belly press or Yergason's** positive; **a cuff tear on MRI or ultrasound**; Hawkins-Kennedy or Neer positive; subacromial tenderness; **a thickened bursa on ultrasound or relief from a subacromial injection**; crepitus; KL 2 or more; **symmetric joint involvement or extra-articular features**; dyskinesis; winging; snapping |
+
+The findings in **bold** were added on 19 October 2026 (item 32).
 | B11 Fallback (S18) | Nothing above fired |
 
 - **Sources say:** The branch order is from the Workflow Guide. The tests are the wrapper Excel columns. No outside source covers this app's routing.
@@ -447,11 +456,116 @@ At the end: **5 red flags from UK guidance that are not among the docs' 9**, and
 
 - **App now:** Each question shows a plain-English line next to the exact Excel column. The "i" button shows the column, its Layer 1 rule, and how its values are spread across the data.
 - **Sources say:** No source can check this. A clinician needs to read it.
-- **Suggested:** A clinician reads all 65 routing questions and 23 shared fields in the app, and marks any wording that could mislead.
+- **Suggested:** A clinician reads all 94 routing questions and 23 shared fields in the app, and marks any wording that could mislead.
 - **How sure:** Your call.
 - **Decision:** ☐ Done ☐ Changes listed: ______
 
 ---
+
+## Node walk (added 19 October 2026)
+
+Inside a branch that holds more than one wrapper, the node walk asks one question at a time until one wrapper is left (`NODES` in `src/ShoulderRouter/routingSpec.js`; the map is `docs/routing_map.png`). These items come from the project's own documents (the DDX rules in `Layer3_DDX_Rules` and the Workflow Guide's presenting-picture table). **I did not search outside sources for them.**
+
+"Test data" below is all 418,500 Golden Dataset rows. On those rows the node walk ends in the right wrapper for 100% of Phase 1–2 rows that reached the right branch (0 of 218,032 wrong). The data is simulated, so this shows the rules agree with the data, not that they are clinically right.
+
+### 26. Node order inside B10 (Mechanical / arthritic / scapular)
+
+**Question:** Is this the right order? The first "yes" decides the wrapper.
+
+| Node | Question | Yes → |
+|---|---|---|
+| B10.1 | X-ray glenohumeral arthritis, Kellgren-Lawrence 2 or more | S06 |
+| B10.2 | Symmetric joint involvement, or extra-articular features | S06 |
+| B10.3 | A cuff tear on MRI or ultrasound | S01 |
+| B10.4 | External rotation lag sign or drop arm test positive | S01 |
+| B10.5 | Glenohumeral crepitus | S06 |
+| B10.6 | Snapping or grinding under the shoulder blade | S10 |
+| B10.7 | Scapular dyskinesis | S11 |
+| B10.8 | Winging with a normal scapular rhythm (item 28) | S10 |
+| B10.9 | Empty Can, Full Can, Lift-Off, Belly Press, Speed's or Yergason's positive, or weakness MRC 4 or less (item 27) | S01 |
+| B10.10 | Painful arc, Hawkins-Kennedy, Neer, subacromial tenderness, a thickened bursa on ultrasound, or relief from a subacromial injection | S03 |
+| — | Nothing fits | S18, clinician review |
+
+- **Why this order:** structural findings first.
+  - Arthritis on X-ray goes to S06 even with a cuff tear: DDX S01-007 (early cuff arthropathy) needs a preserved joint space, and DDX S06-004 (advanced) has arthritic change.
+  - A tear on imaging and the lag / drop-arm signs (DDX S01-003) come before the scapula, so a cuff tear with secondary dyskinesis stays in S01.
+  - The provocation tests come last, because they overlap most (DDX S01-001 and S03-001 both have a painful arc and positive impingement tests).
+- **Test data:** 48 rows end in the wrong wrapper, all recovered Phase 4 S01 rows with every cuff test negative, strength 5/5 and no tear. They end in S03.
+- **Suggested:** Keep, unless a clinician sees a case type the order gets wrong.
+- **How sure:** Your call.
+- **Decision:** ☐ Keep ☐ Change to: ______
+
+### 27. Cuff weakness cut-off (node B10.9)
+
+**Question:** Should weakness of MRC 4 or less in external rotation, internal rotation or abduction count as a cuff sign?
+
+- **App now:** Yes, at node B10.9, after the scapular nodes and only when nothing structural fired earlier.
+- **Sources say (project documents):** DDX S01-002 (partial-thickness tear) is "weakness with preserved passive ROM". The S03 rules do not mention strength.
+- **Problem to check:** Pain can make an impingement patient test weak. With this rule such a patient goes to S01, not S03.
+- **Test data:** 4,195 S01 rows have weakness as their only cuff sign.
+- **Suggested:** Keep, or require MRC 3 or less.
+- **How sure:** Your call.
+- **Decision:** ☐ Keep ☐ Change to: ______
+
+### 28. Winging with a normal scapular rhythm (node B10.8)
+
+**Question:** Should winging with an otherwise normal scapular rhythm go to S10 (a bursa or mass lifting the blade off the chest wall), not S11?
+
+- **App now:** Yes. Winging with dyskinesis goes to S11 at node B10.7 first. If the rhythm was not assessed, the engine does not answer and the clinician picks.
+- **Sources say (project documents):** DDX S10-005 (scapulothoracic bursitis) is "localised scapulothoracic tenderness/swelling"; DDX S11 lists the winging conditions with altered scapular rhythm.
+- **Test data:** 106 S10 rows record winging without snapping.
+- **Suggested:** Keep.
+- **How sure:** Your call.
+- **Decision:** ☐ Keep ☐ Change to: ______
+
+### 29. Fracture branch before the X-ray, and with no fracture (nodes B1.2, B1.3)
+
+**Question:** Before imaging, should the site of the deformity pick the wrapper? After a high-energy injury with no fracture on imaging, should the case go to S10?
+
+- **App now:**
+  - B1.2: deformity of the upper arm or shoulder → S08, of the collarbone → S09, a high-energy injury to the shoulder blade → S10. If more than one fits, the clinician picks.
+  - B1.3: no fracture on imaging after a high-energy injury → S10 (scapulothoracic dissociation can occur without a fracture, DDX S10-006).
+- **Test data:** every S08, S09 and S10 fracture row records its imaging, so these two nodes are not exercised by the data.
+- **Suggested:** Keep, and get an X-ray before the wrapper form is opened.
+- **How sure:** Your call.
+- **Decision:** ☐ Keep ☐ Change to: ______
+
+### 30. Both AC and SC joints tender, or neither (node B7.2)
+
+**Question:** Should each joint's own tests, X-ray and injection decide when both joints are tender, or neither is?
+
+- **App now:** AC: cross-body adduction, AC compression, piano key or AC O'Brien's positive, Rockwood II–VI on X-ray, or relief from an AC injection. SC: serial compression positive, or displacement on the serendipity view. If both or neither fit, the clinician picks.
+- **Note:** Cross-body adduction counts here, but not to enter B7: S03 records it for impingement too.
+- **Suggested:** Keep.
+- **How sure:** Your call.
+- **Decision:** ☐ Keep ☐ Change to: ______
+
+### 31. Node order inside B8 (Neurological)
+
+**Question:** Should a weak named shoulder nerve go to S16 before the thoracic outlet signs are read?
+
+- **App now:** B8.1 a named shoulder nerve at MRC 3 or less (axillary, long thoracic, spinal accessory; suprascapular only with abnormal EMG or a notch on MRI) → S16; B8.2 positional thoracic outlet tests, C8–T1 sensory change, a compression site on MRI/CT or a cervical rib → S14; B8.3 dermatomal sensory loss, a diminished reflex or an abnormal EMG → S16.
+- **Why:** these four nerves are not C8–T1 (DDX S14-001 is a C8–T1 deficit). An abnormal EMG alone is read only after the thoracic outlet signs, because true neurogenic TOS also has abnormal nerve conduction.
+- **Suggested:** Keep.
+- **How sure:** Your call.
+- **Decision:** ☐ Keep ☐ Change to: ______
+
+### 32. Each wrapper's own findings in the branch walk
+
+**Question:** Should these findings, each from a wrapper's own Excel columns, also make its decision point fire? (They are in bold in item 23's table.)
+
+| Branch | Added | DDX rule | Rows that now reach their branch |
+|---|---|---|---|
+| B6 → S02 | Jerk, Kim, load-and-shift, drawer positive; labral tear or Hill-Sachs on MRI | S02-001, 002, 006 | 1,160 (S02 now 100%) |
+| B7 → S04 / S07 | AC compression, piano key, AC O'Brien's; Rockwood II–VI; AC injection relief; SC serial compression; serendipity displacement | S04-001, 002, 003; S07 | 3,869 (S04), 2,381 (S07) |
+| B8 → S14 | Plexus compression site on MRI/CT; cervical rib felt or on X-ray | S14-003 | 478 |
+| B9 → S17 | Os acromiale on X-ray or tender, at any age | S17-004 (15–30 years) | 283 (S17 now 100%) |
+| B10 → S01 / S03 / S06 | ER lag, drop arm, belly press, Yergason's; cuff tear on MRI/ultrasound; bursa on ultrasound; subacromial injection relief; symmetric joints or extra-articular features | S01-002, 003, 004, 005; S03-002; S06-003 | 1,613 (S01), 1,854 (S03), 397 (S06) |
+
+- **Not added:** cross-body adduction alone (S03 records it too), S06 serology and morning stiffness (combined cells; would add 74 rows), S06 Walch pattern (every S06 row has one).
+- **Suggested:** Keep.
+- **How sure:** Your call.
+- **Decision:** ☐ Keep ☐ Change to: ______
 
 ## Red flags in UK guidance that are not among the docs' 9
 
@@ -477,6 +591,6 @@ The 9 flags come from section 10 of the wrapper documents. UK shoulder red flags
 
 1. Tick each "Decision" line.
 2. Make the changes. The values live in two files:
-   - `src/ShoulderRouter/routingSpec.js`: red flags and branches.
+   - `src/ShoulderRouter/routingSpec.js`: red flags, branches and the node walk (`NODES`).
    - `src/ShoulderRouter/values.js`: frozen-shoulder limits and the normal range.
 3. Re-run the test scripts (commands in the README) to see the effect on the test data.

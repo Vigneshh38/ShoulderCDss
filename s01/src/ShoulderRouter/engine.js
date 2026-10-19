@@ -3,12 +3,46 @@
 import { BUILT, RED_FLAGS_DOC, DIALECT } from './routingData.generated.js';
 import {
   FLAGS, SCREENS, SCREEN, FLAG_BRANCH, QUESTIONS, CORE_FIELDS, HISTORY_FIELDS, COL, PROCEDURES, surgeryOf, derivedDominant,
-  IMAGING, FULL_ROM, KEYS, VALUE_MAP, SHARED_FROM,
+  IMAGING, FULL_ROM, KEYS, VALUE_MAP, SHARED_FROM, NODE, NODE_START, EXIT, answerNode,
 } from './routingSpec.js';
 import { NA, has, parseRom3, formatRom3, parseFever, formatFever, parseGirth, formatGirth, parseReflex, formatReflex, parseWeek } from './values.js';
 
-export const ENGINE_VERSION = 'shoulder-routing-0.1 (draft)';
+export const ENGINE_VERSION = 'shoulder-routing-0.2 (draft)';
 const optValue = o => (typeof o === 'object' ? o.v : o);
+
+// ---------- node walk ----------
+// The clinician's answer at a node, and the reason when it differs from the engine's, live in the answers map under
+// these keys (not Excel columns), so they are saved and restored with every other answer.
+export const nodeKey = id => `node|${id}`;
+export const nodeReasonKey = id => `node|${id}::reason`;
+
+// Walk `branch` node by node down to one wrapper. `candidates` are the wrappers this case can still go to: the
+// branch's, or a red flag's. One candidate, or a branch without nodes, needs no walk.
+export function walkNodes(a, branch, candidates) {
+  if (!branch) return { state: 'none', steps: [], wrapper: null };
+  const start = NODE_START[branch];
+  if (candidates.length === 1 || !start) return { state: 'done', single: true, steps: [], wrapper: candidates[0] || null };
+  const steps = [];
+  for (let id = start, guard = 0; id && guard < 50; guard++) {
+    const node = NODE[id];
+    const auto = answerNode(node, a);
+    const opts = [...node.options, EXIT];
+    const chosen = opts.find(o => o.v === a[nodeKey(id)]) || null;
+    const pick = chosen || auto.option;
+    steps.push({
+      id, node, auto, chosen: chosen?.v || null, pick: pick || null, by: chosen ? 'clinician' : pick ? 'engine' : null,
+      // The clinician went against the engine (or answered where the engine could not): a reason is required.
+      differs: !!chosen && (!auto.option || chosen.v !== auto.option.v), reason: String(a[nodeReasonKey(id)] || ''),
+    });
+    if (!pick) return { state: 'open', at: id, steps, wrapper: null };
+    if (pick.to) {
+      const outside = !pick.exit && !candidates.includes(pick.to);
+      return { state: outside ? 'open' : 'done', at: outside ? id : null, steps, wrapper: outside ? null : pick.to, exit: !!pick.exit, outside };
+    }
+    id = pick.next;
+  }
+  return { state: 'open', steps, wrapper: null };
+}
 
 // ---------- evaluation ----------
 export function evaluate(a) {
@@ -37,7 +71,15 @@ export function evaluate(a) {
   let candidates = branch ? SCREEN[branch].wrappers : [];
   if (halt) candidates = halt.flag.wrappers;
   const hints = halt ? halt.flag.wrappers.map(w => ({ w, why: `Red flag ${halt.id}` })) : step?.hints || null;
-  return { flags, fired, openFlags, flagsDone: openFlags.length === 0, halt, walk, current, suggested, branch, candidates, hints, routedBy: halt ? 'red flag' : suggested ? 'branch walk' : null };
+  const nodes = walkNodes(a, branch, candidates);
+  return { flags, fired, openFlags, flagsDone: openFlags.length === 0, halt, walk, current, suggested, branch, candidates, hints, nodes, wrapper: nodes.wrapper, routedBy: halt ? 'red flag' : suggested ? 'branch walk' : null };
+}
+
+// The final route with the clinician's branch choice applied: the branch, its candidate wrappers and the node walk.
+export function routeOf(a, ev = evaluate(a), override = null) {
+  if (!override?.branch) return { branch: ev.branch, candidates: ev.candidates, nodes: ev.nodes };
+  const candidates = SCREEN[override.branch].wrappers;
+  return { branch: override.branch, candidates, nodes: walkNodes(a, override.branch, candidates) };
 }
 
 // Fill blank questions with their "normal" answer (the "No signs" / "All normal" buttons).
@@ -170,10 +212,12 @@ export function rowFor(a, w, { assumed = [], raw = {}, ev = evaluate(a) } = {}) 
   return row;
 }
 
-// The record: `core` and `wrapperFields` hold the answers in Layer 1 wording, keyed by exact column; `rows` holds, for
-// every wrapper in the final branch, the row as that workbook writes it (see rowFor); `routing` is the trace.
+// The record: `core` and `wrapperFields` hold the answers in Layer 1 wording, keyed by exact column; `rows` holds the
+// row of the one wrapper the node walk ends in, as that workbook writes it (see rowFor); `routing` is the trace.
 export function buildRecord(a, { caseId = '', override = null, assumed = [], raw = {} } = {}) {
   const ev = evaluate(a);
+  const route = routeOf(a, ev, override);
+  const nw = route.nodes;
   const skip = new Set(assumed);
   const core = {}, notAssessed = [];
   for (const f of [...CORE_FIELDS, ...HISTORY_FIELDS]) {
@@ -190,13 +234,13 @@ export function buildRecord(a, { caseId = '', override = null, assumed = [], raw
     if (c === undefined) { if (a[q.key] === NA && !q.naLabel) notAssessed.push(`${q.w} · ${q.col}`); continue; }
     for (const [w, col] of q.cols) (wrapperFields[w] ||= {})[col] = c;
   }
-  const finalBranch = override?.branch || ev.branch;
+  const finalBranch = route.branch;
   const name = id => (id ? `${id} · ${SCREEN[id].name}` : null);
   return {
     caseId: caseId || null,
     core,
     wrapperFields,
-    rows: Object.fromEntries((finalBranch ? (override?.branch ? SCREEN[override.branch].wrappers : ev.candidates) : []).map(w => [w, rowFor(a, w, { assumed, raw, ev })])),
+    rows: nw.wrapper ? { [nw.wrapper]: rowFor(a, nw.wrapper, { assumed, raw, ev }) } : {},
     routing: {
       engine: ENGINE_VERSION,
       dataBuiltOn: BUILT.on,
@@ -206,7 +250,20 @@ export function buildRecord(a, { caseId = '', override = null, assumed = [], raw
       walk: ev.walk.map(w => ({ id: w.id, name: w.screen.name, state: w.state, signals: w.signals || [], assumed: w.assumed || [], note: w.note || undefined })),
       suggested: name(ev.branch),
       final: name(finalBranch),
-      finalWrappers: finalBranch ? (override?.branch ? SCREEN[override.branch].wrappers : ev.candidates) : [],
+      finalWrappers: finalBranch ? route.candidates : [],
+      wrapper: nw.wrapper,
+      nodeWalk: nw.single ? [] : nw.steps.map(s => ({
+        node: s.id,
+        question: s.node.ask,
+        answer: s.pick ? s.pick.l : null,
+        leadsTo: s.pick ? s.pick.to || s.pick.next : null,
+        by: s.by,
+        engineAnswer: s.auto.option ? s.auto.option.l : null,
+        signals: s.auto.signals || [],
+        assumed: s.auto.assumed || [],
+        reason: s.differs ? s.reason : undefined,
+      })),
+      nodeWalkState: nw.state,
       override: override?.branch ? { from: ev.branch, to: override.branch, reason: override.reason } : null,
       notAssessed,
       assumedFromDataset: assumed.map(k => (QUESTIONS[k] ? (QUESTIONS[k].ui ? QUESTIONS[k].label : `${QUESTIONS[k].w} · ${QUESTIONS[k].col}`) : k)),
@@ -277,8 +334,9 @@ export function fromDatasetRow(row) {
     else if (f.kind === 'derived') a[f.key] = String(cell);
     else if (f.kind === 'int' || f.kind === 'dec') a[f.key] = String(cell);
     else if (f.kind === 'multi') {
+      // One "specify" text per field: a second specified item (e.g. two malignancies, S05) is kept as written.
       a[f.key] = splitMulti(cell).map(x => {
-        if (f.specify && x.startsWith(f.specify)) { a[part(f.key, 'spec')] = x.slice(f.specify.length).replace(/^[:\s]+/, ''); return f.specify; }
+        if (f.specify && x.startsWith(f.specify) && !has(a, part(f.key, 'spec'))) { a[part(f.key, 'spec')] = x.slice(f.specify.length).replace(/^[:\s]+/, ''); return f.specify; }
         return x;
       });
     } else {

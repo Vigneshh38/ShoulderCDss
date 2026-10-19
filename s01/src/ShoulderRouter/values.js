@@ -69,6 +69,25 @@ export function parseReflex(s) {
 }
 export const formatReflex = r => `Biceps ${r.biceps}, Triceps ${r.triceps}`;
 
+// S01 "ER:4/IR:4/Abd:4" (MRC 0-5)
+export function parseMmt3(s) {
+  const m = /^ER:([0-5])\/IR:([0-5])\/Abd:([0-5])$/.exec(String(s || '').trim());
+  return m ? { er: Number(m[1]), ir: Number(m[2]), abd: Number(m[3]) } : null;
+}
+export const formatMmt3 = m => `ER:${m.er}/IR:${m.ir}/Abd:${m.abd}`;
+
+// S01 "Tear: Partial-thickness; Goutallier: Grade 1"
+export function parseMri(s) {
+  const m = /^Tear: (.+); Goutallier: (Grade [0-4])$/.exec(String(s || '').trim());
+  return m ? { tear: m[1], grade: m[2] } : null;
+}
+
+// S01 "12 mm"
+export function parseUsSize(s) {
+  const m = /^(\d+(?:\.\d+)?) mm$/.exec(String(s || '').trim());
+  return m ? Number(m[1]) : null;
+}
+
 // S12 "Week 1.0 (Phase 1)"
 export const parseWeek = s => {
   const m = /Week\s*([\d.]+)/i.exec(String(s || ''));

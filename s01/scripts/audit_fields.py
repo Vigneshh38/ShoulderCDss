@@ -7,6 +7,7 @@ then checks, for every question:
   - each [wrapper, column] exists in that wrapper's MRL header;
   - every value that occurs in the data is one of the app's options (nothing in the data the app cannot show);
   - every option occurs in the data, or else is a value the Layer 1 validator allows;
+  - for a combined cell without a fixed option list (MMT, ultrasound size), every value matches the question's pattern;
 and that every surgery procedure text occurs in the "Previous Shoulder Surgery" cells exactly as spelled.
 Writes the full report (default: field_audit.txt) and exits 1 when any check fails.
 """
@@ -14,6 +15,7 @@ import collections
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -25,7 +27,7 @@ DUMP = r"""
 import { QUESTIONS, CORE_FIELDS, HISTORY_FIELDS, PROCEDURES } from './src/ShoulderRouter/routingSpec.js';
 const ov = o => (typeof o === 'object' ? o.v : o);
 console.log(JSON.stringify({
-  qs: Object.values(QUESTIONS).map(q => ({ key: q.key, ui: !!q.ui, kind: q.kind, cols: q.cols || [], options: (q.options || []).map(ov), describe: !!q.describe })),
+  qs: Object.values(QUESTIONS).map(q => ({ key: q.key, ui: !!q.ui, kind: q.kind, cols: q.cols || [], options: (q.options || []).map(ov), describe: !!q.describe, pattern: q.pattern || null })),
   shared: [...CORE_FIELDS, ...HISTORY_FIELDS].map(f => ({ key: f.key, kind: f.kind, options: f.options || [] })),
   procedures: PROCEDURES.map(p => p.v),
 }));
@@ -72,6 +74,11 @@ def main():
                 continue
             cnt = values[w][c]
             P(f"[{w} | {c}] {sum(cnt.values())} rows, {len(cnt)} distinct values; Layer 1: {l1.get((w, c), '')[:160]}")
+            if q['pattern']:
+                bad = {v: n for v, n in cnt.items() if not re.match(q['pattern'], v)}
+                P(f"    pattern {q['pattern']}: {sum(cnt.values()) - sum(bad.values())} rows match")
+                for v, n in bad.items():
+                    problems.append(f'{w} | {c}: data value {v!r} ({n} rows) does not match {q["pattern"]}')
             if not q['options']:
                 continue
             ok = lambda v: v in q['options'] or (q['describe'] and v.startswith('Present - '))

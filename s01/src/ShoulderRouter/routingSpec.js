@@ -10,9 +10,9 @@
 // provided, so every rule below marked `draft: true` is our reconstruction and needs clinical sign-off.
 // Pure JS: no React, no DOM, so a server can run the same rules.
 import { WRAPPERS, VOCAB } from './routingData.generated.js';
-import { NA, has, is, num, SOFT, parseRom3, capsularPattern, girthDiff, ROM_NORM } from './values.js';
+import { NA, has, is, num, SOFT, parseRom3, capsularPattern, girthDiff, ROM_NORM, parseMmt3, parseMri, parseUsSize } from './values.js';
 
-// ---------- the five stops ----------
+// ---------- the six stops ----------
 export const LINES = {
   intake: { name: 'Intake line', c: '--red' },
   safety: { name: 'Safety line', c: '--crimson' },
@@ -24,7 +24,8 @@ export const STOPS = [
   { id: 'history', name: 'History', line: 'intake', shape: 'square' },
   { id: 'flags', name: 'Red flags', line: 'safety', shape: 'cross' },
   { id: 'walk', name: 'Branch walk', line: 'route', shape: 'star' },
-  { id: 'result', name: 'Branch', line: 'decide', shape: 'gem' },
+  { id: 'nodes', name: 'Node walk', line: 'route', shape: 'diamond' },
+  { id: 'result', name: 'Wrapper', line: 'decide', shape: 'gem' },
 ];
 
 // ---------- shared columns (identical header and valid values in all 18 workbooks) ----------
@@ -163,6 +164,12 @@ export function surgeryOf(a) {
 // ---------- wrapper-specific questions (key = "<wrapper>|<exact MRL column>") ----------
 const TEST = ['Positive', 'Negative', 'Equivocal', 'Not Performed'];
 const PA = ['Present', 'Absent'];
+// S01 MRI cell parts, as in the S01 form (S01IntakeForm/schema.js) and the 36,000 S01 rows.
+export const MRI_TEAR = ['None', 'Partial-thickness', 'Full-thickness (small <1cm)', 'Full-thickness (medium 1-3cm)', 'Full-thickness (large 3-5cm)', 'Full-thickness (massive >5cm)'];
+export const GOUTALLIER = ['Grade 0', 'Grade 1', 'Grade 2', 'Grade 3', 'Grade 4'];
+export const mriCell = (tear, grade) => `Tear: ${tear}; Goutallier: ${grade}`;
+const reEscape = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const US_NO_TEAR = 'Not applicable (no structural tear on imaging)';
 const Q = {};
 function q(w, col, def) {
   const key = `${w}|${col}`;
@@ -266,6 +273,50 @@ const K = {
   dysk11: q('S11', 'Scapular Dyskinesis Test Grade', { label: 'Scapular dyskinesis', ask: 'Watching the shoulder blade during arm raising and lowering: is its movement abnormal?', kind: 'seg', options: ['Normal', 'Dyskinesis Present (Subtle)', 'Dyskinesis Present (Obvious)'], normal: 'Normal' }),
   wing10: q('S10', 'Scapular Winging', { label: 'Scapular winging', ask: 'Scapular winging?', kind: 'seg', options: PA, normal: 'Absent' }),
   snap10: q('S10', 'Scapulothoracic Crepitus/Snapping', { label: 'Scapulothoracic crepitus / snapping', ask: 'Snapping or grinding under the shoulder blade on arm elevation?', kind: 'seg', options: PA, normal: 'Absent' }),
+
+  // Node walk, B10: the cuff findings that separate S01 from S03 (DDX S01-002/003/004/005: weakness, lag and
+  // drop-arm signs, a tear on imaging, Belly Press, Yergason's). S01 writes every one of these in all 36,000 rows.
+  lag01: q('S01', 'External Rotation Lag Sign', { label: 'External rotation lag sign', ask: 'Placed in full external rotation, does the arm drift back?', kind: 'seg', options: TEST, normal: 'Negative' }),
+  drop01: q('S01', 'Drop Arm Test', { label: 'Drop arm test', ask: 'From 90° abduction, can the arm be lowered slowly, or does it drop?', kind: 'seg', options: TEST, normal: 'Negative' }),
+  belly01: q('S01', 'Belly Press Test', { label: 'Belly press test (subscapularis)', ask: 'Belly press test (subscapularis)', kind: 'seg', options: TEST, normal: 'Not Performed', optional: true }),
+  yerg01: q('S01', "Yergason's Test (biceps)", { label: "Yergason's test (biceps)", ask: "Yergason's test (biceps)", kind: 'seg', options: TEST, normal: 'Not Performed', optional: true }),
+  // "ER:4/IR:4/Abd:4" in every S01 row.
+  mmt01: q('S01', 'Muscle Strength (MMT) - ER/IR/Abduction', { label: 'Muscle strength (MMT)', ask: 'Strength of external rotation, internal rotation and abduction (MRC 0-5)', kind: 'mmt3', pattern: '^ER:[0-5]/IR:[0-5]/Abd:[0-5]$', normal: 'ER:5/IR:5/Abd:5' }),
+  // "Tear: Partial-thickness; Goutallier: Grade 1": the S01 form's MRI field (schema.js MRI_TEAR, GOUTALLIER).
+  mri01: q('S01', 'MRI_Rotator Cuff Tear Grade (partial/full-thickness) / Goutallier Fatty Infiltration Grade', { label: 'MRI: rotator cuff tear', ask: 'MRI: is the rotator cuff torn, and how much fat is in the muscle (Goutallier)?', kind: 'mri', tears: MRI_TEAR, grades: GOUTALLIER, pattern: `^Tear: (${MRI_TEAR.map(reEscape).join('|')}); Goutallier: (${GOUTALLIER.map(reEscape).join('|')})$`, normal: NA, naLabel: 'No MRI' }),
+  // "12 mm", or the "not applicable" text when imaging shows no structural tear (S01: always with an MRI "Tear: None").
+  us01: q('S01', 'Ultrasound_Tendon Tear Size', { label: 'Ultrasound: tendon tear size', ask: 'Ultrasound: size of the cuff tendon tear', kind: 'usSize', min: 1, max: 100, decimals: 1, unit: 'mm', noTear: US_NO_TEAR, pattern: '^(\\d+(\\.\\d)? mm|Not applicable \\(no structural tear on imaging\\))$', normal: NA, naLabel: 'No ultrasound', optional: true }),
+
+  // Node walk, B7: the tests that tell an AC joint from an SC joint when both are tender.
+  obrienAc4: q('S04', "O'Brien's Test (AC-specific)", { label: "O'Brien's test (AC)", ask: "O'Brien's test with the pain on top of the shoulder (AC joint)", kind: 'seg', options: TEST, normal: 'Not Performed', optional: true }),
+  comp4: q('S04', 'AC Joint Compression Test', { label: 'AC joint compression test', ask: 'AC joint compression (shear) test', kind: 'seg', options: TEST, normal: 'Not Performed', optional: true }),
+  piano4: q('S04', 'Piano Key Sign', { label: 'Piano key sign', ask: 'Piano key sign: the distal clavicle springs back after pressing down', kind: 'seg', options: TEST, normal: 'Not Performed', optional: true }),
+  serial7: q('S07', 'Serial Compression Test', { label: 'Serial compression test (SC)', ask: 'Serial compression test of the SC joint', kind: 'seg', options: ['Positive', 'Negative', 'Equivocal'], normal: NA, naLabel: 'Not performed', optional: true }),
+  // Imaging and injection findings of the two joints. Rockwood Type I has a normal X-ray, so it is not a finding here.
+  rock4: q('S04', 'X-Ray_Rockwood Classification (Type I-VI)', { label: 'X-ray: Rockwood type (AC)', ask: 'X-ray of the AC joint: Rockwood type?', kind: 'seg', options: ['Type I', 'Type II', 'Type III', 'Type IV', 'Type V', 'Type VI', 'Not applicable (non-traumatic)'], normal: NA, naLabel: 'Not X-rayed', optional: true }),
+  inj4: q('S04', 'Response to Diagnostic AC Joint Injection (Y/N)', { label: 'Diagnostic AC joint injection', ask: 'Did a diagnostic AC joint injection relieve the pain?', kind: 'seg', options: ['Yes', 'No'], normal: NA, naLabel: 'Not injected', optional: true }),
+  seren7: q('S07', 'X-Ray_Serendipity View Findings', { label: 'X-ray: serendipity view (SC)', ask: 'Serendipity view X-ray of the SC joint', kind: 'seg', options: ['Normal alignment', 'Anterior displacement', 'Posterior displacement'], normal: NA, naLabel: 'Not X-rayed', optional: true }),
+
+  // Each wrapper's own defining findings, read by its decision point (DDX rules; draft, for clinical sign-off).
+  // B6: posterior instability and laxity tests, and the labral / Hill-Sachs findings on MRI (DDX S02).
+  jerk2: q('S02', 'Jerk Test (posterior instability)', { label: 'Jerk test (posterior)', ask: 'Jerk test (posterior instability)', kind: 'seg', options: TEST, normal: 'Not Performed', optional: true }),
+  kim2: q('S02', 'Kim Test (posterior labral)', { label: 'Kim test (posterior labrum)', ask: 'Kim test (posterior labral)', kind: 'seg', options: TEST, normal: 'Not Performed', optional: true }),
+  shift2: q('S02', 'Load and Shift Test', { label: 'Load and shift test', ask: 'Load and shift test (humeral head translation)', kind: 'seg', options: TEST, normal: 'Not Performed', optional: true }),
+  drawer2: q('S02', 'Anterior/Posterior Drawer Test (GH joint)', { label: 'Anterior / posterior drawer (GH)', ask: 'Anterior / posterior drawer test of the glenohumeral joint', kind: 'seg', options: TEST, normal: 'Not Performed', optional: true }),
+  labrum2: q('S02', 'MRI Arthrogram_Labral Tear Location/Type (Bankart / SLAP I-IV / reverse Bankart)', { label: 'MR arthrogram: labral tear', ask: 'MR arthrogram: is the labrum torn?', kind: 'seg', options: ['None', 'Bankart', 'Reverse Bankart', 'SLAP Type I', 'SLAP Type II', 'SLAP Type III', 'SLAP Type IV'], normal: NA, naLabel: 'No MR arthrogram', optional: true }),
+  hs2: q('S02', 'MRI_Hill-Sachs Lesion Present (Y/N)', { label: 'MRI: Hill-Sachs lesion', ask: 'MRI: a Hill-Sachs lesion (humeral head impaction from a dislocation)?', kind: 'seg', options: ['Yes', 'No'], normal: NA, naLabel: 'No MRI', optional: true }),
+  // B8: a structural cause at the thoracic outlet (DDX S14-003 cervical rib; the compression site on MRI/CT).
+  site14: q('S14', 'MRI/CT_Brachial Plexus Compression Site', { label: 'MRI/CT: plexus compression site', ask: 'MRI/CT: where is the brachial plexus compressed?', kind: 'seg', options: ['None identified', 'Scalene triangle', 'Costoclavicular space', 'Subpectoral (retropectoralis minor) space'], normal: NA, naLabel: 'No MRI/CT', optional: true }),
+  rib14: q('S14', 'Cervical Rib Palpation', { label: 'Cervical rib palpation', ask: 'A cervical rib felt in the supraclavicular fossa?', kind: 'seg', options: PA, normal: 'Absent', optional: true }),
+  ribx14: q('S14', 'X-Ray_Cervical Rib Present', { label: 'X-ray: cervical rib', ask: 'X-ray: a cervical rib?', kind: 'seg', options: ['Yes', 'No'], normal: NA, naLabel: 'Not X-rayed', optional: true }),
+  // B9: os acromiale is a developmental anomaly (S17), found at any age.
+  osx17: q('S17', 'X-Ray_Os Acromiale Present', { label: 'X-ray: os acromiale', ask: 'X-ray: an unfused acromial ossification centre (os acromiale)?', kind: 'seg', options: ['Yes', 'No'], normal: NA, naLabel: 'Not X-rayed', optional: true }),
+  ospal17: q('S17', 'Os Acromiale Palpation', { label: 'Os acromiale palpation', ask: 'Tender over an unfused acromial ossification centre?', kind: 'seg', options: ['Absent', { v: 'Present - tender at the unfused acromial ossification centre', l: 'Present: tender at the unfused centre' }], normal: 'Absent', optional: true }),
+  // B10: inflammatory arthritis (DDX S06-003) and subacromial bursitis (DDX S03-002).
+  sym6: q('S06', 'Symmetric Joint Involvement (inflammatory screen)', { label: 'Symmetric joint involvement', ask: 'Are other joints involved symmetrically (inflammatory screen)?', kind: 'seg', options: ['Yes', 'No'], normal: 'No' }),
+  extra6: q('S06', 'Extra-Articular Manifestations (if inflammatory - nodules/eye/skin/lung)', { label: 'Extra-articular features', ask: 'Rheumatoid nodules, or eye, skin or lung involvement?', kind: 'seg', options: ['None', 'Rheumatoid Nodules', 'Eye Involvement (e.g. scleritis)', 'Skin Involvement', 'Lung Involvement'], normal: 'None', optional: true }),
+  bursa3: q('S03', 'Ultrasound_Subacromial Bursal Thickening/Effusion', { label: 'Ultrasound: subacromial bursa', ask: 'Ultrasound: is the subacromial bursa thickened or holding fluid?', kind: 'seg', options: ['None', 'Mild', 'Moderate', 'Severe'], normal: NA, naLabel: 'No ultrasound', optional: true }),
+  inj3: q('S03', 'Response to Diagnostic Subacromial Injection (Y/N)', { label: 'Diagnostic subacromial injection', ask: 'Did a diagnostic subacromial injection relieve the pain?', kind: 'seg', options: ['Yes', 'No'], normal: NA, naLabel: 'Not injected', optional: true }),
 };
 export const QUESTIONS = Q;
 export const KEYS = K;
@@ -409,6 +460,21 @@ export const FLAGS = [
 Q['ui|safeguarding'] = { key: 'ui|safeguarding', ui: true, col: COL.redFlags, w: '*', label: 'Safeguarding concern', ask: 'Is there a safeguarding concern: an injury the history does not explain, or one that does not fit the child\'s age or development?', kind: 'seg', options: ['Yes', 'No'], normal: 'No' };
 for (const f of FLAGS) f.wrappers = f.wrappers || [f.wrapper];
 
+// Thoracic outlet signs (S14): C8-T1 sensory change, a positive positional test, a compression site on MRI/CT, a
+// cervical rib. Read by decision point B8 and node B8.2.
+function tosSigns(a) {
+  return [is(a, K.c8t1, 'Reduced', 'Absent') && said(a, K.c8t1), ...[K.roos14, K.adson14, K.wright14, K.costo14, K.ultt14].map(k => positive(a, k) && said(a, k)),
+    is(a, K.site14, 'Scalene triangle', 'Costoclavicular space', 'Subpectoral (retropectoralis minor) space') && said(a, K.site14),
+    present(a, K.rib14) && said(a, K.rib14), is(a, K.ribx14, 'Yes') && said(a, K.ribx14)].filter(Boolean);
+}
+// AC joint (S04) and SC joint (S07) findings other than tenderness: the joint's own tests, imaging and injection.
+const acSigns = a => [...[K.comp4, K.obrienAc4, K.piano4].map(k => positive(a, k) && said(a, k)), is(a, K.rock4, 'Type II', 'Type III', 'Type IV', 'Type V', 'Type VI') && said(a, K.rock4), is(a, K.inj4, 'Yes') && said(a, K.inj4)].filter(Boolean);
+const scSigns = a => [positive(a, K.serial7) && said(a, K.serial7), is(a, K.seren7, 'Anterior displacement', 'Posterior displacement') && said(a, K.seren7)].filter(Boolean);
+// Inflammatory arthritis picture (S06, DDX S06-003): symmetric joint involvement or extra-articular features.
+const inflammatory = a => [is(a, K.sym6, 'Yes') && said(a, K.sym6), has(a, K.extra6) && ![NA, 'None'].includes(a[K.extra6]) && said(a, K.extra6)].filter(Boolean);
+// Subacromial bursitis (S03, DDX S03-002): bursal thickening or fluid on ultrasound, relief from a diagnostic injection.
+const bursal = a => [is(a, K.bursa3, 'Mild', 'Moderate', 'Severe') && said(a, K.bursa3), is(a, K.inj3, 'Yes') && said(a, K.inj3)].filter(Boolean);
+
 // ---------- the 11 branch decision points (Workflow Guide, Step 2; first match wins) ----------
 const IMG_W = { [IMG.humerus]: 'S08', [IMG.clavicle]: 'S09', [IMG.scapula]: 'S10' };
 const fractureSeen = a => [IMG.humerus, IMG.clavicle, IMG.scapula].includes(a[IMAGING]);
@@ -505,31 +571,35 @@ export const SCREENS = [
   {
     id: 'B6', n: 6, name: 'Instability', short: 'Instability', shape: 'wedge', wrappers: ['S02'],
     doc: 'instability screen', ask: 'Does the shoulder slip out, feel loose, or test positive for instability or SLAP?',
-    questions: [K.episodes2, K.appr2, K.reloc2, K.sulcus2, K.obrien2],
+    questions: [K.episodes2, K.appr2, K.reloc2, K.sulcus2, K.obrien2, K.jerk2, K.kim2, K.shift2, K.drawer2, K.labrum2, K.hs2],
     evaluate: a => decide(a, {
-      signals: [num(a, K.episodes2) >= 1 && `${num(a, K.episodes2)} prior dislocation episode${num(a, K.episodes2) > 1 ? 's' : ''}`, positive(a, K.appr2) && said(a, K.appr2), positive(a, K.reloc2) && said(a, K.reloc2), positive(a, K.sulcus2) && said(a, K.sulcus2), positive(a, K.obrien2) && said(a, K.obrien2)],
+      signals: [num(a, K.episodes2) >= 1 && `${num(a, K.episodes2)} prior dislocation episode${num(a, K.episodes2) > 1 ? 's' : ''}`, ...[K.appr2, K.reloc2, K.sulcus2, K.obrien2, K.jerk2, K.kim2, K.shift2, K.drawer2].map(k => positive(a, k) && said(a, k)),
+        has(a, K.labrum2) && ![NA, 'None'].includes(a[K.labrum2]) && said(a, K.labrum2), is(a, K.hs2, 'Yes') && said(a, K.hs2)],
       needs: [K.episodes2, K.appr2, K.reloc2, K.sulcus2, K.obrien2],
     }),
   },
   {
     id: 'B7', n: 7, name: 'AC / SC joint', short: 'AC/SC', shape: 'gem', wrappers: ['S04', 'S07'],
     doc: 'AC/SC-joint screen', ask: 'Is the AC joint (top of the shoulder) or the SC joint (breastbone end) tender or deformed?',
-    questions: [K.ac4, K.sc7, K.cba4],
+    questions: [K.ac4, K.sc7, K.cba4, K.comp4, K.obrienAc4, K.piano4, K.rock4, K.inj4, K.serial7, K.seren7],
     evaluate: a => {
-      const r = decide(a, { signals: [present(a, K.ac4) && said(a, K.ac4), present(a, K.sc7) && said(a, K.sc7)], needs: [K.ac4, K.sc7] });
-      if (r.state === 'fires') r.hints = [present(a, K.ac4) && { w: 'S04', why: 'AC joint finding' }, present(a, K.sc7) && { w: 'S07', why: 'SC joint finding' }].filter(Boolean);
+      // Besides tenderness: a positive joint-specific test, an injury on X-ray, or relief from a diagnostic injection.
+      // Cross-body adduction alone does not count: S03 records it for impingement too.
+      const ac = acSigns(a), sc = scSigns(a);
+      const r = decide(a, { signals: [present(a, K.ac4) && said(a, K.ac4), present(a, K.sc7) && said(a, K.sc7), ...ac, ...sc], needs: [K.ac4, K.sc7] });
+      if (r.state === 'fires') r.hints = [(present(a, K.ac4) || ac.length > 0) && { w: 'S04', why: 'AC joint finding' }, (present(a, K.sc7) || sc.length > 0) && { w: 'S07', why: 'SC joint finding' }].filter(Boolean);
       return r;
     },
   },
   {
     id: 'B8', n: 8, name: 'Neurological', short: 'Neuro', shape: 'star', wrappers: ['S14', 'S16'], draft: true,
     doc: 'neurological screen', ask: 'Numbness, tingling or a positional TOS test, or one nerve\'s muscles weak?',
-    questions: [K.c8t1, K.roos14, K.adson14, K.wright14, K.costo14, K.ultt14, K.derm16, K.axil16, K.lt16, K.sa16, K.supra16, K.emg16, K.notch16],
+    questions: [K.c8t1, K.roos14, K.adson14, K.wright14, K.costo14, K.ultt14, K.site14, K.rib14, K.ribx14, K.derm16, K.axil16, K.lt16, K.sa16, K.supra16, K.emg16, K.notch16],
     evaluate: a => {
       const weak = k => num(a, k) != null && num(a, k) <= 3;
       const emgAbn = String(a[K.emg16] || '').startsWith('Abnormal');
       const notch = is(a, K.notch16, 'Suprascapular', 'Spinoglenoid notch');
-      const tos = [is(a, K.c8t1, 'Reduced', 'Absent') && said(a, K.c8t1), ...[K.roos14, K.adson14, K.wright14, K.costo14, K.ultt14].map(k => positive(a, k) && said(a, k))];
+      const tos = [...tosSigns(a)];
       const nerve = [String(a[K.derm16] || '').match(/^(Reduced|Absent)/) && said(a, K.derm16), weak(K.axil16) && `${lab(K.axil16)} ${num(a, K.axil16)}/5`, weak(K.lt16) && `${lab(K.lt16)} ${num(a, K.lt16)}/5`, weak(K.sa16) && `${lab(K.sa16)} ${num(a, K.sa16)}/5`,
         // Cuff tears weaken infra/supraspinatus too, so this nerve only counts with abnormal EMG or a compression site on MRI.
         weak(K.supra16) && (emgAbn || notch) && `${lab(K.supra16)} ${num(a, K.supra16)}/5 with ${emgAbn ? 'abnormal EMG' : `MRI compression at the ${a[K.notch16].toLowerCase()}`}`];
@@ -541,9 +611,12 @@ export const SCREENS = [
   {
     id: 'B9', n: 9, name: 'Paediatric / congenital', short: 'Paediatric', shape: 'circle', wrappers: ['S17'],
     doc: 'paediatric/congenital screen', ask: 'Is this birth-related, congenital or a childhood condition?',
-    questions: [K.onset17, K.birth17],
+    questions: [K.onset17, K.birth17, K.osx17, K.ospal17],
     evaluate: a => {
       if (a.Onset === 'Congenital-Developmental') return { state: 'fires', signals: ['Onset: Congenital-Developmental (Patient stop)'] };
+      // Os acromiale (DDX S17-004, 15-30 years) is a developmental anomaly that becomes painful in adults.
+      const os = listed([is(a, K.osx17, 'Yes') && said(a, K.osx17), String(a[K.ospal17] || '').startsWith('Present') && said(a, K.ospal17)]);
+      if (os.length) return { state: 'fires', signals: os };
       if (!has(a, 'Age')) return { state: 'open', missing: ['Age'], note: 'Enter the age on the Patient stop.' };
       const age = num(a, 'Age');
       if (age != null && age >= 18) return { state: 'clear', assumed: [], note: `Adult (${age}) and the onset is not congenital.` };
@@ -554,23 +627,26 @@ export const SCREENS = [
   {
     id: 'B10', n: 10, name: 'Mechanical / arthritic / scapular', short: 'Default', shape: 'square', wrappers: ['S01', 'S03', 'S06', 'S11', 'S10'],
     doc: 'default mechanical/arthritic/scapular groups', ask: 'Pain with movement, a positive cuff or impingement test, grinding, or a scapular problem?',
-    questions: [K.arc, K.emptycan, K.fullcan, K.liftoff, K.speeds, K.hawkins, K.neer, K.sat3, K.crepitus6, K.kl6, K.dysk11, K.onset11, K.wing10, K.snap10],
+    questions: [K.arc, K.emptycan, K.fullcan, K.liftoff, K.speeds, K.lag01, K.drop01, K.belly01, K.yerg01, K.mri01, K.us01, K.hawkins, K.neer, K.sat3, K.bursa3, K.inj3, K.crepitus6, K.kl6, K.sym6, K.extra6, K.dysk11, K.onset11, K.wing10, K.snap10],
     evaluate: a => {
       const arc = has(a, K.arc) && String(a[K.arc]).startsWith('Present');
       const kl = is(a, K.kl6, 'Grade 2', 'Grade 3', 'Grade 4');
       const dysk = String(a[K.dysk11] || '').startsWith('Dyskinesis Present');
-      const cuff = [K.emptycan, K.fullcan, K.liftoff, K.speeds].filter(k => positive(a, k));
-      const imp = arc || positive(a, K.hawkins) || positive(a, K.neer) || present(a, K.sat3);
+      const cuff = [K.emptycan, K.fullcan, K.liftoff, K.speeds, K.lag01, K.drop01, K.belly01, K.yerg01].filter(k => positive(a, k));
+      const mri = parseMri(a[K.mri01]), us = parseUsSize(a[K.us01]);
+      const tear = listed([mri && mri.tear !== 'None' && `MRI: ${mri.tear} tear`, us != null && `Ultrasound: ${us} mm tear`]);
+      const imp = arc || positive(a, K.hawkins) || positive(a, K.neer) || present(a, K.sat3) || bursal(a).length > 0;
+      const infl = inflammatory(a);
       const hints = [
-        cuff.length && { w: 'S01', why: `${cuff.map(lab).join(', ')} positive: rotator cuff / biceps` },
-        imp && !cuff.length && { w: 'S03', why: 'Painful arc / impingement signs with the cuff tests not positive' },
-        (present(a, K.crepitus6) || kl) && { w: 'S06', why: kl ? `X-ray ${a[K.kl6]}` : 'Crepitus' },
+        (cuff.length || tear.length) && { w: 'S01', why: cuff.length ? `${cuff.map(lab).join(', ')} positive: rotator cuff / biceps` : tear.join('; ') },
+        imp && !cuff.length && !tear.length && { w: 'S03', why: 'Painful arc / impingement or bursal signs with the cuff tests not positive' },
+        (present(a, K.crepitus6) || kl || infl.length) && { w: 'S06', why: kl ? `X-ray ${a[K.kl6]}` : infl.length ? infl.join('; ') : 'Crepitus' },
         (dysk || present(a, K.wing10)) && { w: 'S11', why: dysk ? a[K.dysk11] : 'Scapular winging (no fracture)' },
         present(a, K.snap10) && { w: 'S10', why: 'Scapulothoracic snapping (the non-fracture part of S10)' },
       ].filter(Boolean);
       const r = decide(a, {
-        signals: [arc && said(a, K.arc), ...cuff.map(k => said(a, k)), ...[K.hawkins, K.neer].map(k => positive(a, k) && said(a, k)), present(a, K.sat3) && said(a, K.sat3), present(a, K.crepitus6) && said(a, K.crepitus6), kl && `X-ray ${a[K.kl6]}`, dysk && said(a, K.dysk11), present(a, K.wing10) && said(a, K.wing10), present(a, K.snap10) && said(a, K.snap10)],
-        needs: [K.arc, K.emptycan, K.hawkins, K.crepitus6, K.dysk11, K.wing10, K.snap10],
+        signals: [arc && said(a, K.arc), ...cuff.map(k => said(a, k)), ...tear, ...[K.hawkins, K.neer].map(k => positive(a, k) && said(a, k)), present(a, K.sat3) && said(a, K.sat3), ...bursal(a), present(a, K.crepitus6) && said(a, K.crepitus6), kl && `X-ray ${a[K.kl6]}`, ...infl, dysk && said(a, K.dysk11), present(a, K.wing10) && said(a, K.wing10), present(a, K.snap10) && said(a, K.snap10)],
+        needs: [K.arc, K.emptycan, K.lag01, K.drop01, K.mri01, K.hawkins, K.crepitus6, K.sym6, K.dysk11, K.wing10, K.snap10],
       });
       if (r.state === 'fires') r.hints = hints;
       return r;
@@ -584,6 +660,203 @@ export const SCREENS = [
   },
 ];
 export const SCREEN = Object.fromEntries(SCREENS.map(s => [s.id, s]));
+
+// ---------- the node walk: inside a branch, down to one wrapper ----------
+// A branch that holds more than one wrapper (B1, B7, B8, B10, and red flag SH-RF-07's three fracture wrappers) is
+// walked node by node, the way the Knee CDSS walks its branches (kneeCdssV2 stage 03b): each node asks one question,
+// and each answer either ends at a wrapper or leads to the next node. A case goes into exactly one primary wrapper
+// (Workflow Guide, section 3). Node questions use only findings available before the wrapper is opened.
+//   test(a)    the engine's reading of the answers: a reason (string) when the option fits, else false
+//   next / to  the next node, or the wrapper where the walk ends
+//   needs      questions that must be answered before the engine may say that nothing fits
+//   choice     several options may fit at once; then the clinician picks (no engine answer)
+//   hold(a)    a reason the engine must not answer this node, and the clinician picks
+// When no option fits, the engine's answer is the honest exit the Knee CDSS gives every node (ruling 9): "None of
+// these fit - clinician review", ending in S18, the guide's "none of the above fit clearly" group.
+// The node order inside B10 and the MRC threshold are ours (draft, for clinical sign-off), built on the DDX rules.
+export const EXIT = { v: 'exit', l: 'None of these fit - clinician review', to: 'S18', exit: true };
+const weakDirs = a => { const m = parseMmt3(a[K.mmt01]); return m ? [['ER', m.er], ['IR', m.ir], ['Abd', m.abd]].filter(([, g]) => g <= 4) : []; };
+const reflexDown = a => { const r = a[K.reflex16]; return r && typeof r === 'object' ? ['biceps', 'triceps'].filter(s => /diminished/.test(String(r[s]))) : []; };
+const listed = xs => xs.filter(Boolean);
+
+export const NODES = [
+  // B1: the fracture wrappers. Imaging decides; before the X-ray, the site of the deformity does.
+  {
+    id: 'B1.1', branch: 'B1', name: 'Fracture site', ask: 'Which bone does the X-ray or CT show broken?',
+    questions: [IMAGING], needs: [IMAGING],
+    options: [
+      { v: 'humerus', l: 'Proximal humerus', to: 'S08', test: a => a[IMAGING] === IMG.humerus && 'Imaging: proximal humerus fracture' },
+      { v: 'clavicle', l: 'Clavicle', to: 'S09', test: a => a[IMAGING] === IMG.clavicle && 'Imaging: clavicle fracture' },
+      { v: 'scapula', l: 'Scapula or glenoid', to: 'S10', test: a => a[IMAGING] === IMG.scapula && 'Imaging: scapula / glenoid fracture' },
+      { v: 'notYet', l: 'Not imaged yet', next: 'B1.2', test: a => (a[IMAGING] === IMG.notYet || a[IMAGING] === NA) && 'Not imaged yet' },
+      { v: 'none', l: 'No fracture on imaging', next: 'B1.3', test: a => a[IMAGING] === IMG.none && 'No fracture on imaging' },
+    ],
+  },
+  {
+    id: 'B1.2', branch: 'B1', name: 'Site of the deformity', ask: 'Not imaged yet: where is the injury? (An X-ray confirms it.)',
+    questions: [K.deform8, K.deform9, K.mech10], needs: [K.deform8, K.deform9, K.mech10], choice: true,
+    options: [
+      { v: 'humerus', l: 'Upper arm / shoulder', to: 'S08', test: a => present(a, K.deform8) && said(a, K.deform8) },
+      { v: 'clavicle', l: 'Collarbone', to: 'S09', test: a => present(a, K.deform9) && said(a, K.deform9) },
+      { v: 'scapula', l: 'Shoulder blade, after a high-energy injury', to: 'S10', test: a => is(a, K.mech10, 'High-energy trauma for fracture') && said(a, K.mech10) },
+    ],
+  },
+  {
+    id: 'B1.3', branch: 'B1', name: 'High-energy, no fracture', ask: 'No fracture on imaging. Was it a high-energy injury to the shoulder girdle (scapulothoracic injury)?',
+    questions: [K.mech10, K.nv10], needs: [K.mech10],
+    options: [{ v: 'yes', l: 'Yes: high-energy injury', to: 'S10', test: a => is(a, K.mech10, 'High-energy trauma for fracture') && said(a, K.mech10) }],
+  },
+
+  // B7: AC joint (S04) or SC joint (S07): the tender joint decides; if both are tender, their own tests do.
+  {
+    id: 'B7.1', branch: 'B7', name: 'Which joint', ask: 'Which joint is tender, swollen or deformed?',
+    questions: [K.ac4, K.sc7], needs: [K.ac4, K.sc7],
+    options: [
+      { v: 'both', l: 'Both joints', next: 'B7.2', test: a => present(a, K.ac4) && present(a, K.sc7) && 'Both the AC and the SC joint are tender' },
+      { v: 'ac', l: 'AC joint (top of the shoulder)', to: 'S04', test: a => present(a, K.ac4) && said(a, K.ac4) },
+      { v: 'sc', l: 'SC joint (breastbone end)', to: 'S07', test: a => present(a, K.sc7) && said(a, K.sc7) },
+      { v: 'neither', l: 'Neither is tender', next: 'B7.2', otherwise: true },
+    ],
+  },
+  {
+    id: 'B7.2', branch: 'B7', name: 'AC or SC tests', ask: 'Both joints are tender, or neither is. Which joint do the tests, X-ray or injection point to?',
+    questions: [K.cba4, K.comp4, K.obrienAc4, K.piano4, K.rock4, K.inj4, K.serial7, K.seren7], needs: [K.cba4, K.comp4, K.serial7], choice: true,
+    options: [
+      // With a tender AC joint ruled out as the only finding, cross-body adduction counts here as an AC test.
+      { v: 'ac', l: 'AC joint', to: 'S04', test: a => { const s = [positive(a, K.cba4) && said(a, K.cba4), ...acSigns(a)].filter(Boolean); return s.length > 0 && s.join('; '); } },
+      { v: 'sc', l: 'SC joint', to: 'S07', test: a => { const s = scSigns(a); return s.length > 0 && s.join('; '); } },
+    ],
+  },
+
+  // B8: a named shoulder nerve (S16), the thoracic outlet (S14), or a plexus / root pattern (S16).
+  {
+    id: 'B8.1', branch: 'B8', name: 'Named shoulder nerve', ask: 'Is a named shoulder nerve weak (MRC 3 or less)?',
+    questions: [K.axil16, K.lt16, K.sa16, K.supra16, K.emg16, K.notch16], needs: [K.axil16, K.lt16, K.sa16, K.supra16],
+    options: [
+      {
+        v: 'yes', l: 'Yes', to: 'S16',
+        test: a => {
+          const weak = k => num(a, k) != null && num(a, k) <= 3;
+          // Cuff tears weaken infra/supraspinatus too, so that nerve counts only with abnormal EMG or a notch on MRI (as at B8).
+          const supra = weak(K.supra16) && (String(a[K.emg16] || '').startsWith('Abnormal') || is(a, K.notch16, 'Suprascapular', 'Spinoglenoid notch'));
+          const hits = listed([weak(K.axil16) && K.axil16, weak(K.lt16) && K.lt16, weak(K.sa16) && K.sa16, supra && K.supra16]);
+          return hits.length > 0 && hits.map(k => `${lab(k)} ${num(a, k)}/5`).join('; ');
+        },
+      },
+      { v: 'no', l: 'No', next: 'B8.2', otherwise: true },
+    ],
+  },
+  {
+    id: 'B8.2', branch: 'B8', name: 'Thoracic outlet signs', ask: 'Positional thoracic outlet signs, ulnar-border (C8-T1) sensory change, a cervical rib, or a compression site on MRI/CT?',
+    questions: [K.c8t1, K.roos14, K.adson14, K.wright14, K.costo14, K.ultt14, K.site14, K.rib14, K.ribx14], needs: [K.c8t1, K.roos14, K.adson14],
+    options: [
+      { v: 'yes', l: 'Yes', to: 'S14', test: a => { const s = tosSigns(a); return s.length > 0 && s.join('; '); } },
+      { v: 'no', l: 'No', next: 'B8.3', otherwise: true },
+    ],
+  },
+  {
+    id: 'B8.3', branch: 'B8', name: 'Plexus or root pattern', ask: 'Dermatomal sensory loss, a diminished reflex, or an abnormal EMG?',
+    questions: [K.derm16, K.reflex16, K.emg16], needs: [K.derm16],
+    options: [{ v: 'yes', l: 'Yes', to: 'S16', test: a => { const s = listed([is(a, K.derm16, 'Reduced', 'Absent') && said(a, K.derm16), reflexDown(a).length > 0 && `Reflex diminished: ${reflexDown(a).join(', ')}`, String(a[K.emg16] || '').startsWith('Abnormal') && said(a, K.emg16)]); return s.length > 0 && s.join('; '); } }],
+  },
+
+  // B10: structural findings first (arthritis, then a cuff tear), then the scapula, then the provocation tests.
+  {
+    id: 'B10.1', branch: 'B10', name: 'Arthritis on X-ray', ask: 'Does the X-ray show glenohumeral arthritis (Kellgren-Lawrence grade 2 or higher)?',
+    questions: [K.kl6], needs: [K.kl6],
+    options: [
+      { v: 'yes', l: 'Yes: grade 2-4', to: 'S06', test: a => is(a, K.kl6, 'Grade 2', 'Grade 3', 'Grade 4') && `X-ray Kellgren-Lawrence ${a[K.kl6]}` },
+      { v: 'no', l: 'No, or not X-rayed', next: 'B10.2', otherwise: true },
+    ],
+  },
+  {
+    id: 'B10.2', branch: 'B10', name: 'Inflammatory arthritis', ask: 'Other joints involved symmetrically, or extra-articular features (nodules, eye, skin, lung)?',
+    questions: [K.sym6, K.extra6], needs: [K.sym6],
+    options: [
+      { v: 'yes', l: 'Yes', to: 'S06', test: a => { const s = inflammatory(a); return s.length > 0 && s.join('; '); } },
+      { v: 'no', l: 'No', next: 'B10.3', otherwise: true },
+    ],
+  },
+  {
+    id: 'B10.3', branch: 'B10', name: 'Cuff tear on imaging', ask: 'Does MRI or ultrasound show a rotator cuff tear?',
+    questions: [K.mri01, K.us01], needs: [K.mri01],
+    options: [
+      { v: 'yes', l: 'Yes', to: 'S01', test: a => { const m = parseMri(a[K.mri01]); const us = parseUsSize(a[K.us01]); const s = listed([m && m.tear !== 'None' && `MRI: ${m.tear} tear`, us != null && `Ultrasound: ${us} mm tear`]); return s.length > 0 && s.join('; '); } },
+      { v: 'no', l: 'No tear, or not imaged', next: 'B10.4', otherwise: true },
+    ],
+  },
+  {
+    id: 'B10.4', branch: 'B10', name: 'Lag or drop-arm sign', ask: 'An external rotation lag sign or a positive drop arm test?',
+    questions: [K.lag01, K.drop01], needs: [K.lag01, K.drop01],
+    options: [
+      { v: 'yes', l: 'Yes', to: 'S01', test: a => { const s = [K.lag01, K.drop01].filter(k => positive(a, k)); return s.length > 0 && s.map(k => said(a, k)).join('; '); } },
+      { v: 'no', l: 'No', next: 'B10.5', otherwise: true },
+    ],
+  },
+  {
+    id: 'B10.5', branch: 'B10', name: 'Joint grinding', ask: 'Grinding in the glenohumeral joint (crepitus)?',
+    questions: [K.crepitus6], needs: [K.crepitus6],
+    options: [
+      { v: 'yes', l: 'Yes', to: 'S06', test: a => present(a, K.crepitus6) && said(a, K.crepitus6) },
+      { v: 'no', l: 'No', next: 'B10.6', otherwise: true },
+    ],
+  },
+  {
+    id: 'B10.6', branch: 'B10', name: 'Snapping scapula', ask: 'Snapping or grinding under the shoulder blade on arm elevation?',
+    questions: [K.snap10], needs: [K.snap10],
+    options: [
+      { v: 'yes', l: 'Yes', to: 'S10', test: a => present(a, K.snap10) && said(a, K.snap10) },
+      { v: 'no', l: 'No', next: 'B10.7', otherwise: true },
+    ],
+  },
+  {
+    id: 'B10.7', branch: 'B10', name: 'Scapular dyskinesis', ask: 'Watching the shoulder blade during arm raising and lowering: is its movement abnormal?',
+    questions: [K.dysk11], needs: [K.dysk11],
+    options: [
+      { v: 'yes', l: 'Yes', to: 'S11', test: a => String(a[K.dysk11] || '').startsWith('Dyskinesis Present') && said(a, K.dysk11) },
+      { v: 'no', l: 'No', next: 'B10.8', otherwise: true },
+    ],
+  },
+  {
+    id: 'B10.8', branch: 'B10', name: 'Winging, normal rhythm', ask: 'Winging while the shoulder blade otherwise moves normally (lifted off the chest wall, e.g. by a bursa)?',
+    questions: [K.wing10, K.dysk11], needs: [K.wing10],
+    hold: a => present(a, K.wing10) && a[K.dysk11] === NA && 'Winging with the scapular rhythm not assessed: true winging (S11) or a bursa lifting the blade (S10)? Assess the rhythm, or choose.',
+    options: [
+      { v: 'yes', l: 'Yes', to: 'S10', test: a => present(a, K.wing10) && a[K.dysk11] === 'Normal' && `${said(a, K.wing10)}, scapular rhythm normal` },
+      { v: 'no', l: 'No', next: 'B10.9', otherwise: true },
+    ],
+  },
+  {
+    id: 'B10.9', branch: 'B10', name: 'Cuff or biceps test', ask: 'A cuff or biceps test positive, or true weakness (MRC 4 or less)?',
+    questions: [K.emptycan, K.fullcan, K.liftoff, K.belly01, K.speeds, K.yerg01, K.mmt01], needs: [K.emptycan, K.mmt01],
+    options: [
+      { v: 'yes', l: 'Yes', to: 'S01', test: a => { const w = weakDirs(a); const s = listed([...[K.emptycan, K.fullcan, K.liftoff, K.belly01, K.speeds, K.yerg01].map(k => positive(a, k) && said(a, k)), w.length > 0 && `Weakness: ${w.map(([d, g]) => `${d} ${g}/5`).join(', ')}`]); return s.length > 0 && s.join('; '); } },
+      { v: 'no', l: 'No', next: 'B10.10', otherwise: true },
+    ],
+  },
+  {
+    id: 'B10.10', branch: 'B10', name: 'Impingement or bursitis', ask: 'Painful arc, a positive Hawkins-Kennedy or Neer test, tenderness under the acromion, or a thickened bursa on ultrasound / relief from a subacromial injection?',
+    questions: [K.arc, K.hawkins, K.neer, K.sat3, K.bursa3, K.inj3], needs: [K.arc, K.hawkins],
+    options: [{ v: 'yes', l: 'Yes', to: 'S03', test: a => { const s = listed([String(a[K.arc] || '').startsWith('Present') && said(a, K.arc), ...[K.hawkins, K.neer].map(k => positive(a, k) && said(a, k)), present(a, K.sat3) && said(a, K.sat3), ...bursal(a)]); return s.length > 0 && s.join('; '); } }],
+  },
+];
+export const NODE = Object.fromEntries(NODES.map(n => [n.id, n]));
+export const NODE_START = { B1: 'B1.1', B7: 'B7.1', B8: 'B8.1', B10: 'B10.1' };
+
+// The engine's answer at one node. A yes/no node answers "yes" on the first sign, like a decision point. A node with
+// several possible answers waits until every needed question is answered, so a later answer cannot change it.
+export function answerNode(node, a) {
+  const held = node.hold && node.hold(a);
+  if (held) return { option: null, hold: true, note: held };
+  const missing = node.needs.filter(k => !has(a, k) && !(Q[k]?.when && !Q[k].when(a)));
+  const tests = node.options.filter(o => !o.otherwise);
+  const fired = tests.map(o => ({ o, s: o.test(a) })).filter(x => x.s);
+  if (tests.length === 1 && fired.length) return { option: fired[0].o, signals: [fired[0].s] };
+  if (missing.length) return { option: null, missing };
+  if (node.choice && fired.length > 1) return { option: null, conflict: fired.map(x => x.o.v), note: `More than one answer fits (${fired.map(x => x.s).join(' / ')}). Choose one.` };
+  if (fired.length) return { option: fired[0].o, signals: [fired[0].s] };
+  return { option: node.options.find(o => o.otherwise) || EXIT, signals: [], assumed: node.needs.filter(k => assumption(a, k)).map(k => said(a, k)) };
+}
 // Which branch a red flag lands in (the flag's wrapper sits in exactly one branch, except S10: its emergencies are fractures).
 export const FLAG_BRANCH = { 'SH-RF-01': 'B7', 'SH-RF-02': 'B2', 'SH-RF-03': 'B4', 'SH-RF-04': 'B4', 'SH-RF-05': 'B11', 'SH-RF-06': 'B1', 'SH-RF-07': 'B1', 'SH-RF-08': 'B8', 'SH-RF-09': 'B9' };
 export const BRANCH_COLORS = Object.fromEntries(SCREENS.map(s => [s.id, `--b${s.n}`]));

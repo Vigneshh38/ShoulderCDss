@@ -7,7 +7,7 @@ import { SAMPLE_CASE } from './sampleCase.js';
 import './demo.css';
 
 const VIEWS = [
-  { id: 'routing', label: 'Branch routing' },
+  { id: 'routing', label: 'Routing' },
   { id: 's01', label: 'S01 intake form' },
 ];
 
