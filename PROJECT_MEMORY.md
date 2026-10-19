@@ -1,7 +1,7 @@
 # Shoulder CDSS: Project Memory / Handoff
 
 > Context file for continuing this project in a new AI chat session. Read this first, then the files it points to.
-> Last updated: 2026-10-10
+> Last updated: 2026-10-19
 
 ---
 
@@ -178,6 +178,26 @@ A clinician then reviews and signs them off.
 **Across the docs:**
 - **No real "cleared" field for S13/S15.** A hidden "cleared" value decides the halt status, but a live form needs real fields. A clinical definition is needed (the docs name Jeeva as sign-off for S13/S15).
 - **File naming:** the docs say every dataset is named `..._Golden_Dataset_SIMULATED.xlsx`; only S15's file actually is.
+- **Surgery names are spelled several ways** across the workbooks (e.g. `Rotator cuff repair` / `rotator cuff repair` / `Arthroscopic RCR`). The app copies them exactly, so it works, but the Excel should be made consistent.
+
+**Knee vs Shoulder value standardisation (checked 2026-10-19):**
+
+- **The shoulder code matches the shoulder Excel.** `scripts/audit_fields.py` found 0 problems (65 routing questions, 23 shared fields, 38 procedures, all 18 workbooks). A separate check of the S01 form against all 36,000 S01 rows found every Excel value can be entered and every number fits the form's limits.
+- **Knee and shoulder use different values for some of the same fields.** This is fine while they run as separate modules. It must be handled if they share an intake screen, a patient, or reports:
+
+| Field | Knee Excel | Shoulder Excel | Real Excel difference? |
+|---|---|---|---|
+| BMI | 13–36.5 (knee app allows 11–40) | 10–44.9 (form allows 10–60) | **Yes.** Knee's 11–40 limit would block shoulder patients with BMI over 40 |
+| Onset | No shared column; each wrapper has its own wording | One shared list: Acute (<2 weeks) / Subacute (2-12 weeks) / Chronic (>12 weeks) / Insidious / Congenital-Developmental | **Yes** |
+| Activity Level | Sedentary / Light activity / Moderate activity / Active/regular exerciser / Competitive athlete / Age-appropriate play | Sedentary / Light / Moderate / Vigorous / Competitive Athlete | Wording only (needs a mapping) |
+| Co-morbidities | e.g. Type 2 Diabetes Mellitus, Hypothyroidism (W01 only checked) | e.g. Diabetes Mellitus, Thyroid Disease | Wording only |
+| Medication History | Free text, e.g. `None regular`, `NSAID PRN` | Free text, e.g. `None`, `NSAIDs as needed` | Wording only |
+| Night Pain | Yes / No (W16) | Yes / No | No. The knee app's None / Mild / Constant-intense is its own list |
+| Age | From 0 (W09 children) | 0–96 (form allows 0–120) | No. Only the app limits differ (knee app 2–100, months under 2) |
+
+- **Also:** the knee app's own answer lists (`formSchema.json`, `screenOptionLists.json`) do not match the knee Excel for Activity Level, Night Pain, Co-morbidities and Medication. That belongs to the knee team.
+- **Before joining the SMAART dashboard:** keep each joint's own limits (or widen shared ones, e.g. BMI) and add a knee↔shoulder value mapping for Activity Level, Co-morbidities and Medication. Decide Onset with Dr. Jeeva.
+- **Source of knee values:** the knee workbooks are not in either repo. Values came from the knee repo's saved scans (`backend/_scratch/cov_after.json`, `_scratch/specCols.json`) and `rules/inputLimits.json`. Co-morbidities was seen for W01 only, Night Pain for W16 only, nothing for W18. Re-check against the real knee workbooks when available.
 
 ## 8. Working preferences of the user
 
